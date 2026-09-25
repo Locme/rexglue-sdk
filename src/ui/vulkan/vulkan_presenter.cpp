@@ -2175,6 +2175,12 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
   }
   command_buffers[command_buffer_count++] = draw_command_buffer;
   VkSemaphore present_semaphore = paint_submission.present_semaphore();
+  // Vsync present gate (see Presenter::VsyncPresentGateAllows): when the
+  // `vsync` cvar is enabled, at most one present into the swapchain is
+  // allowed per host vblank. If this paint's present is suppressed, don't
+  // signal the present semaphore either - a signal without a matching present
+  // wait would accumulate and let a later present consume a stale signal.
+  const bool present_suppressed_by_vsync = !VsyncPresentGateAllows();
   VkSubmitInfo submit_info;
   submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
   submit_info.pNext = nullptr;
@@ -2183,8 +2189,8 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
   submit_info.pWaitDstStageMask = &acquire_semaphore_wait_stage;
   submit_info.commandBufferCount = command_buffer_count;
   submit_info.pCommandBuffers = command_buffers;
-  submit_info.signalSemaphoreCount = 1;
-  submit_info.pSignalSemaphores = &present_semaphore;
+  submit_info.signalSemaphoreCount = present_suppressed_by_vsync ? 0 : 1;
+  submit_info.pSignalSemaphores = present_suppressed_by_vsync ? nullptr : &present_semaphore;
   {
     VulkanSubmissionTracker::FenceAcquisition fence_acqusition(
         paint_context_.submission_tracker.AcquireFenceToAdvanceSubmission());
@@ -2227,6 +2233,15 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
     }
   }
 
+  if (present_suppressed_by_vsync) {
+    // A frame was already presented on this host vblank (the `vsync` cvar is
+    // enabled). Skip the present: the swapchain keeps showing the last
+    // presented image until the next paint presents the fresh content, which
+    // happens on the next vblank at the latest while any UI drawer is active
+    // (the continuous UI repaint is requested after every draw). This keeps
+    // the host present rate capped at the monitor refresh rate.
+    return PaintResult::kPresented;
+  }
   VkPresentInfoKHR present_info;
   present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
   present_info.pNext = nullptr;
@@ -2241,6 +2256,9 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
     const VulkanDevice::Queue::Acquisition queue_acquisition =
         vulkan_device_->AcquireQueue(paint_context_.present_queue_family, 0);
     present_result = dfn.vkQueuePresentKHR(queue_acquisition.queue(), &present_info);
+  }
+  if (present_result == VK_SUCCESS || present_result == VK_SUBOPTIMAL_KHR) {
+    VsyncPresentGateNotePresent();
   }
   switch (present_result) {
     case VK_SUCCESS:
