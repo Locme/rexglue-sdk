@@ -10,9 +10,12 @@
  */
 
 #include <algorithm>
+#include <cctype>
 #include <cinttypes>
 #include <cmath>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 #include <string_view>
 
 #include <fmt/format.h>
@@ -25,6 +28,7 @@
 #include <rex/graphics/flags.h>
 #include <rex/graphics/graphics_system.h>
 #include <rex/graphics/pipeline/texture/info.h>
+#include <rex/graphics/pipeline/texture/util.h>
 #include <rex/graphics/sampler_info.h>
 #include <rex/graphics/xenos.h>
 #include <rex/logging.h>
@@ -57,6 +61,14 @@ REXCVAR_DEFINE_STRING(readback_resolve, "none", "GPU",
 REXCVAR_DEFINE_BOOL(readback_resolve_half_pixel_offset, false, "GPU",
                     "When draw resolution scaling is active, sample from the center of each "
                     "scaled block during resolve readback downscale")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+
+REXCVAR_DEFINE_STRING(readback_resolve_force_addresses, "", "GPU",
+                      "Comma-separated guest base addresses whose render-to-texture resolve is "
+                      "force-read back to guest memory even when readback_resolve is disabled. "
+                      "Each entry (hex/decimal) matches [addr, addr + 1 MiB). E.g. Fable II's "
+                      "hero/dog face texture at 0x12704000 (approach from just-harry's "
+                      "unofficial Xenia femtofork for Fable II).")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
 REXCVAR_DEFINE_BOOL(readback_memexport, true, "GPU",
@@ -179,6 +191,147 @@ ReadbackResolveMode CommandProcessor::GetReadbackResolveMode(
   }
   return legacy_readback_resolve_enabled ? ReadbackResolveMode::kFast
                                          : ReadbackResolveMode::kDisabled;
+}
+
+bool CommandProcessor::ShouldForceReadbackResolve(uint32_t base) const {
+  const std::string& spec = REXCVAR_GET(readback_resolve_force_addresses);
+  if (spec.empty()) {
+    return false;
+  }
+
+  // The hero/dog EDRAM-resolve copy is issued as a PM4_DRAW_INDX_2 draw (see the
+  // `may_require_readback_resolve_` set in the draw opcode dispatch). Regular
+  // PM4_DRAW_INDX draws can also be a kRectangleList/3 copy to the same
+  // destination (the game sampling that texture mid-frame); reading those back
+  // captures a mid-update state and makes the dog look red / shifting.
+  if (!may_require_readback_resolve_) {
+    return false;
+  }
+
+  // Only the hero/dog texture blit should force a readback, matching the
+  // femtofork's detection: a fullscreen kRectangleList draw with 3 indices that
+  // copies to the texture base. Restricting to that exact shape (rather than any
+  // copy near the address) matters: the dog's texture is touched by extra / 
+  // partial copies near the same region, and reading those back mid-update makes
+  // it look glitchy / shifting. The full-texture blit is the kRectangleList/3 one.
+  const reg::VGT_DRAW_INITIATOR vgt = register_file_->Get<reg::VGT_DRAW_INITIATOR>();
+  if (vgt.prim_type != xenos::PrimitiveType::kRectangleList || vgt.num_indices != 0x03) {
+    return false;
+  }
+
+  // Each entry is a guest base address (hex with an optional 0x prefix, or
+  // decimal); it matches [addr, addr + kForceReadbackWindow).
+  //
+  // The window must be SMALL. The hero/dog texture lives in a densely-packed
+  // region of the GPU memory (0x12700000+) that also holds many other EDRAM
+  // resolve targets (e.g. 0x12724000, 0x1272c000, ...) which the game blits in
+  // rapid bursts. A 1 MiB window catches all of those and forces an immediate
+  // GPU-sync readback for each one, stalling the GPU mid-frame (the dog looked
+  // glitchy / red / shifting). 64 KiB still covers the target texture (the blit
+  // targets its base) while the nearest unrelated target is 128 KiB away.
+  constexpr uint32_t kForceReadbackWindow = 1u << 16;  // 64 KiB
+  size_t start = 0;
+  while (start < spec.size()) {
+    size_t end = spec.find(',', start);
+    if (end == std::string::npos) {
+      end = spec.size();
+    }
+    std::string_view token = spec.substr(start, end - start);
+    // Trim surrounding whitespace.
+    while (!token.empty() && std::isspace(static_cast<unsigned char>(token.front()))) {
+      token.remove_prefix(1);
+    }
+    while (!token.empty() && std::isspace(static_cast<unsigned char>(token.back()))) {
+      token.remove_suffix(1);
+    }
+    if (!token.empty()) {
+      uint64_t addr = 0;
+      try {
+        size_t pos = 0;
+        addr = std::stoull(std::string(token), &pos, 0);  // base 0: 0x-hex or decimal
+      } catch (const std::exception&) {
+        addr = 0;
+        // Malformed token - ignore.
+      }
+      uint32_t a = static_cast<uint32_t>(addr);
+      if (base >= a && base - a < kForceReadbackWindow) {
+        // Throttled diagnostic: confirm the forced readback is triggering and on
+        // the expected address (helps discover a second address for the dog).
+        static int s_forced_readback_log = 0;
+        if (s_forced_readback_log < 24) {
+          REXGPU_INFO("Forced readback-resolve for RB_COPY_DEST_BASE={:#010x} "
+                      "(matched force address {:#010x})",
+                      base, a);
+          ++s_forced_readback_log;
+        }
+        return true;
+      }
+    }
+    start = end + 1;
+  }
+  return false;
+}
+
+uint32_t CommandProcessor::GetForceReadbackDestAddress(uint32_t address, uint32_t mip_address,
+                                                       uint32_t width, uint32_t height,
+                                                       uint32_t format, bool is_tiled,
+                                                       uint32_t len, uint64_t frame) {
+  // A mipmap chain (the dog's 512x512) is resolved one mip at a time, largest-first, all
+  // reporting the SAME base address AND the SAME render-target width/height. So the mip level
+  // CANNOT be derived from the width (it is constant); it is the running index within the
+  // burst (the Nth mip is level N). The burst resets when the address/frame changes, or when a
+  // LARGER length arrives (a new base mip of a different chain sharing the base). Each mip is
+  // then placed at the fetch-layout offset for its level (not a running sum of lengths, which
+  // is wrong for tiled/packed layouts and made the dog show "multiple textures").
+  const bool new_burst = (address != force_readback_burst_address_ ||
+                          frame != force_readback_burst_frame_ ||
+                          len > force_readback_burst_prev_len_);
+  if (new_burst) {
+    force_readback_burst_address_ = address;
+    force_readback_burst_frame_ = frame;
+    force_readback_burst_base_width_ = width;
+    force_readback_burst_base_height_ = height;
+    force_readback_burst_mip_level_ = 0;
+    force_readback_burst_first_len_ = len;
+  } else {
+    force_readback_burst_mip_level_++;
+  }
+  force_readback_burst_prev_len_ = len;
+  const uint32_t level = force_readback_burst_mip_level_;
+  const uint32_t base_width = force_readback_burst_base_width_;
+  const uint32_t base_height = force_readback_burst_base_height_;
+  // The mip region (mips 1+) address is normally the bound texture's mip_address, but the dog's
+  // chain is resolved BEFORE it is ever bound/sampled, so the cache lookup returns 0. For a
+  // tiled texture the mip region sits right after mip0, so fall back to base + size_of_mip0
+  // (the burst's first-mip length). Verified: the 256x256's mip_address 0x12724000 == its base
+  // 0x12704000 + its 128 KB mip0.
+  uint32_t effective_mip_address = mip_address;
+  if (effective_mip_address == 0) {
+    effective_mip_address = address + force_readback_burst_first_len_;
+  }
+  // Build the guest layout for the full mip chain (max_level = log2 of the base dimension),
+  // then index the per-mip offset. has_packed_levels=false: the dog's first mips (0-4) are not
+  // packed, so their offsets are identical either way.
+  const uint32_t base_dim = std::max(base_width, base_height);
+  const uint32_t max_level = base_dim >= 2 ? static_cast<uint32_t>(rex::log2_ceil(base_dim)) : 0;
+  const uint32_t base_pitch_texels_div_32 = std::max<uint32_t>(1, base_width / 32);
+  const texture_util::TextureGuestLayout layout = texture_util::GetGuestTextureLayout(
+      xenos::DataDimension::k2DOrStacked, base_pitch_texels_div_32, base_width, base_height, 1,
+      is_tiled, static_cast<xenos::TextureFormat>(format), false, true, max_level);
+  if (level >= xenos::kTextureMaxMips) {
+    return address;
+  }
+  // [TEMP — reverting to the known-best placement] Writing each mip to its distinct
+  // fetch-layout offset (effective_mip_address + mip_offsets_bytes[level]) made the dog show
+  // "multiple textures" — the sampler does NOT read mips 1+ from there. Placing every mip at
+  // the base (they overlap) was the best-looking result so far ("1 texture, shimmering").
+  // Temporarily force the base while we confirm where the sampler actually reads each mip
+  // (via the distinct-HERODOG_FETCH dump). See plan.
+  // if (level == 0) {
+  //   return address;
+  // }
+  // return effective_mip_address + layout.mip_offsets_bytes[level];
+  return address;
 }
 
 bool CommandProcessor::IsReadbackMemexportEnabled(bool legacy_backend_flag) const {
@@ -1416,6 +1569,10 @@ bool CommandProcessor::ExecutePacketType3_DRAW_INDX(memory::RingBuffer* reader, 
   }
   uint32_t viz_query_condition = reader->ReadAndSwap<uint32_t>();
   --count_remaining;
+  // PM4_DRAW_INDX is a regular indexed draw (may carry a viz query token). The
+  // hero/dog EDRAM-resolve copy is NOT issued with this opcode, so never
+  // force-readback from it.
+  may_require_readback_resolve_ = false;
   return ExecutePacketType3Draw(reader, packet, "PM4_DRAW_INDX", viz_query_condition,
                                 count_remaining);
 }
@@ -1425,6 +1582,9 @@ bool CommandProcessor::ExecutePacketType3_DRAW_INDX_2(memory::RingBuffer* reader
   // "draw using supplied indices in packet"
   // Generally used by Xbox 360 Direct3D 9 for kAutoIndex source.
   // No viz query token.
+  // This is the opcode the EDRAM-resolve copy (e.g. the hero/dog texture blit)
+  // is issued with, so it is the only one that may force a readback.
+  may_require_readback_resolve_ = true;
   return ExecutePacketType3Draw(reader, packet, "PM4_DRAW_INDX_2", 0, count);
 }
 

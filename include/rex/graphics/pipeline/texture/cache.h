@@ -74,6 +74,12 @@ class TextureCache {
     return draw_resolution_scale_x_ > 1 || draw_resolution_scale_y_ > 1;
   }
 
+  // Returns the guest mip address (the base page for mip 1+), in bytes, for a bound texture
+  // whose base address matches `base_address`; 0 if none. Used by the hero/dog forced-readback
+  // mipmap fix to place mips 1+ at their correct guest offset (mip 0 lives at the base address,
+  // mips 1+ at mip_address + the per-mip layout offset).
+  uint32_t GetMipAddressForBaseAddress(uint32_t base_address) const;
+
   virtual void ClearCache();
 
   virtual void CompletedSubmissionUpdated(uint64_t completed_submission_index);

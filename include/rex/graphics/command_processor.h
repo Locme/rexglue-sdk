@@ -227,6 +227,24 @@ class CommandProcessor {
 
   // Shared readback resolve mode with backend legacy-flag alias support.
   ReadbackResolveMode GetReadbackResolveMode(bool legacy_readback_resolve_enabled) const;
+  // True when a resolve to guest base address `base` should be force-read back to
+  // guest memory even with readback_resolve disabled (readback_resolve_force_addresses).
+  bool ShouldForceReadbackResolve(uint32_t base) const;
+  // For a forced readback to a mipmap-chained texture (e.g. the dog's 512x512 chain at
+  // 0x12704000, resolved one mip at a time, all reporting the same base address AND the same
+  // render-target width/height), returns the correct guest destination for this mip. The EDRAM
+  // resolve writes every mip to the base, but a tiled mipmap chain lays each mip out at a
+  // specific (non-contiguous) byte offset, so each mip must be memcpy'd to its layout offset or
+  // the mips clobber each other (the dog shows "multiple textures"). The mip level is the
+  // running index within the burst (mips arrive largest-first, so the Nth mip is level N) — it
+  // CANNOT be derived from the width, which is constant (the render-target size). The burst
+  // resets when the address/frame changes or a larger `len` arrives (a new base mip). Mip 0 is
+  // placed at `address` (the base); mips 1+ at `mip_address + mip_offsets_bytes[level]` (the
+  // per-mip layout offset is from the mip region, not the base). Mutates the rolling burst
+  // state.
+  uint32_t GetForceReadbackDestAddress(uint32_t address, uint32_t mip_address, uint32_t width,
+                                       uint32_t height, uint32_t format, bool is_tiled,
+                                       uint32_t len, uint64_t frame);
   // Shared memexport readback enable state with backend legacy-flag override support.
   bool IsReadbackMemexportEnabled(bool legacy_backend_flag) const;
 
@@ -281,6 +299,30 @@ class CommandProcessor {
   reg::DC_LUT_30_COLOR gamma_ramp_256_entry_table_[256] = {};
   reg::DC_LUT_PWL_DATA gamma_ramp_pwl_rgb_[128][3] = {};
   uint32_t gamma_ramp_rw_component_ = 0;
+
+  // Set by the PM4 draw opcode dispatch (mirrors the femtofork's
+  // `may_require_readback_resolve`): true for PM4_DRAW_INDX_2 (the EDRAM-resolve
+  // copy that the hero/dog texture blit uses), false for PM4_DRAW_INDX. The
+  // force-readback gate requires this, otherwise regular indexed draws that also
+  // happen to be a kRectangleList/3 copy to the same destination (the game
+  // sampling that texture mid-frame) would trigger a readback of a mid-update
+  // state, making the dog look red / shifting.
+  bool may_require_readback_resolve_ = false;
+
+  // Rolling state for GetForceReadbackDestAddress: the base address + frame of the
+  // in-progress forced-readback burst, the leading (base) mip's width/height, a running mip
+  // LEVEL counter, and the previous mip's byte length. A mipmap chain is resolved
+  // largest-first, one mip per EDRAM copy, all reporting the SAME base address and the SAME
+  // (render-target) width/height — so the mip level CANNOT be derived from the width (it is
+  // constant); it is the running index within the burst, reset when the address/frame changes
+  // or a LARGER length arrives (a new base mip / a different texture sharing the base).
+  uint32_t force_readback_burst_address_ = 0;
+  uint64_t force_readback_burst_frame_ = 0;
+  uint32_t force_readback_burst_base_width_ = 0;
+  uint32_t force_readback_burst_base_height_ = 0;
+  uint32_t force_readback_burst_mip_level_ = 0;
+  uint32_t force_readback_burst_prev_len_ = 0;
+  uint32_t force_readback_burst_first_len_ = 0;
 };
 
 }  // namespace rex::graphics
