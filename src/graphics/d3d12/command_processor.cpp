@@ -11,16 +11,9 @@
 
 #include <algorithm>
 #include <cstdarg>
-#include <cstdint>
-#include <cstdio>
 #include <cstring>
-#include <filesystem>
-#include <fstream>
-#include <map>
 #include <sstream>
-#include <tuple>
 #include <utility>
-#include <vector>
 
 #include <rex/assert.h>
 #include <rex/cvar.h>
@@ -31,8 +24,6 @@
 #include <rex/graphics/d3d12/shader.h>
 #include <rex/graphics/flags.h>
 #include <rex/graphics/registers.h>
-#include <rex/graphics/pipeline/texture/info.h>
-#include <rex/graphics/pipeline/texture/util.h>
 #include <rex/graphics/util/draw.h>
 #include <rex/graphics/xenos.h>
 #include <rex/kernel/xboxkrnl/video.h>
@@ -2887,120 +2878,14 @@ bool D3D12CommandProcessor::IssueCopy() {
     return false;
   }
   ReadbackResolveMode readback_mode = GetReadbackResolveMode(REXCVAR_GET(d3d12_readback_resolve));
-  // [hero/dog fix] The forced address (0x12704000) hosts MORE than one texture. The dog's
-  // texture is the 512x512 5-mip chain (resolved once); a separate 256x256 packed-mips texture
-  // is resolved every frame into the SAME base and its 128 KB mip0 clobbers the dog's texture.
-  // Only read back the 512x512 chain (the dog's texture); skip the every-frame 256x256 resolve
-  // so it doesn't clobber the dog.
-  const reg::RB_COPY_DEST_PITCH cdp_forced = register_file_->Get<reg::RB_COPY_DEST_PITCH>();
-  const bool is_forced_address =
-      ShouldForceReadbackResolve(register_file_->values[XE_GPU_REG_RB_COPY_DEST_BASE]);
-  const bool is_hero_dog_resolve =
-      is_forced_address && cdp_forced.copy_dest_pitch == 512 && cdp_forced.copy_dest_height == 512;
-  if (is_forced_address && !is_hero_dog_resolve) {
-    return true;
-  }
-  if (readback_mode == ReadbackResolveMode::kDisabled && !is_forced_address) {
+  if (readback_mode == ReadbackResolveMode::kDisabled &&
+      !ShouldForceReadbackResolve(register_file_->values[XE_GPU_REG_RB_COPY_DEST_BASE])) {
     uint32_t written_address, written_length;
     return render_target_cache_->Resolve(*memory_, *shared_memory_, *texture_cache_,
                                          written_address, written_length);
   }
   return IssueCopy_ReadbackResolvePath();
 }
-
-// [HERODOG texture export] De-tile a Xenos tiled color texture and write it as a 24-bit BMP
-// so the hero/dog texture can be reviewed. `pixel_data` is the tiled readback buffer with byte 0
-// == the tile origin (0,0) (full-frame resolve from origin). Only the two formats actually used
-// at 0x12704000 are handled precisely (k_8_8_8_8 and k_1_5_5_5); everything else is a best-effort
-// raw 3-byte copy.
-namespace {
-
-void BmpWriteU32(std::ofstream& f, uint32_t v) {
-  const uint8_t b[4] = {uint8_t(v & 0xFF), uint8_t((v >> 8) & 0xFF), uint8_t((v >> 16) & 0xFF),
-                        uint8_t((v >> 24) & 0xFF)};
-  f.write(reinterpret_cast<const char*>(b), 4);
-}
-void BmpWriteU16(std::ofstream& f, uint16_t v) {
-  const uint8_t b[2] = {uint8_t(v & 0xFF), uint8_t((v >> 8) & 0xFF)};
-  f.write(reinterpret_cast<const char*>(b), 2);
-}
-
-bool ExportTiledTextureToBmp(const std::filesystem::path& path, const uint8_t* pixel_data,
-                             uint32_t width, uint32_t height, uint32_t pitch, uint32_t format) {
-  const FormatInfo* fi = FormatInfo::Get(format);
-  if (!fi || fi->type != FormatType::kUncompressed || width == 0 || height == 0) {
-    return false;
-  }
-  const uint32_t bpb = fi->bytes_per_block();
-  uint32_t bpp_log2 = 0;
-  if (bpb < 1 || !rex::bit_scan_forward(bpb >> 3, &bpp_log2)) {
-    return false;
-  }
-
-  std::vector<uint8_t> bgr;
-  bgr.resize(size_t(width) * height * 3);
-  for (uint32_t y = 0; y < height; ++y) {
-    for (uint32_t x = 0; x < width; ++x) {
-      uint8_t r = 0, g = 0, b = 0;
-      const int32_t off = texture_util::GetTiledOffset2D(x, y, pitch, bpp_log2);
-      if (off >= 0) {
-        const uint8_t* p = pixel_data + off;
-        switch (format) {
-          case uint32_t(xenos::TextureFormat::k_8_8_8_8):
-            r = p[0]; g = p[1]; b = p[2]; break;
-          case uint32_t(xenos::TextureFormat::k_1_5_5_5): {
-            uint16_t v;
-            std::memcpy(&v, p, 2);
-            const uint32_t r5 = (v >> 7) & 0x1F;
-            const uint32_t g5 = (v >> 2) & 0x1F;
-            const uint32_t b5 = v & 0x1F;
-            r = uint8_t((r5 << 3) | (r5 >> 2));
-            g = uint8_t((g5 << 3) | (g5 >> 2));
-            b = uint8_t((b5 << 3) | (b5 >> 2));
-            break;
-          }
-          default:
-            r = p[0]; g = p[1]; b = p[2]; break;
-        }
-      }
-      uint8_t* out = &bgr[size_t(y) * width * 3 + x * 3];
-      out[0] = b; out[1] = g; out[2] = r;  // BMP is BGR.
-    }
-  }
-
-  const uint32_t row_bytes = (width * 3 + 3) & ~3u;
-  const uint32_t pixel_size = row_bytes * height;
-  const uint32_t file_size = 14 + 40 + pixel_size;
-  std::ofstream f(path, std::ios::binary);
-  if (!f) {
-    return false;
-  }
-  f.put('B'); f.put('M');
-  BmpWriteU32(f, file_size);
-  BmpWriteU16(f, 0);
-  BmpWriteU16(f, 0);
-  BmpWriteU32(f, 54);  // offset to pixel data
-  BmpWriteU32(f, 40);  // BITMAPINFOHEADER size
-  BmpWriteU32(f, width);
-  BmpWriteU32(f, height);  // positive == bottom-up
-  BmpWriteU16(f, 1);       // planes
-  BmpWriteU16(f, 24);      // bits per pixel
-  BmpWriteU32(f, 0);       // BI_RGB (uncompressed)
-  BmpWriteU32(f, pixel_size);
-  BmpWriteU32(f, 0);
-  BmpWriteU32(f, 0);
-  BmpWriteU32(f, 0);
-  BmpWriteU32(f, 0);
-  std::vector<uint8_t> row(row_bytes, 0);
-  for (int32_t y = int32_t(height) - 1; y >= 0; --y) {
-    std::memcpy(row.data(), &bgr[size_t(y) * width * 3], width * 3);
-    f.write(reinterpret_cast<const char*>(row.data()), row_bytes);
-  }
-  f.close();
-  return f.good();
-}
-
-}  // namespace
 
 bool D3D12CommandProcessor::IssueCopy_ReadbackResolvePath() {
   uint32_t written_address, written_length;
@@ -3016,27 +2901,6 @@ bool D3D12CommandProcessor::IssueCopy_ReadbackResolvePath() {
   if (!memory_->TranslatePhysical(written_address)) {
     return true;
   }
-
-  // [hero/dog mipmap fix] For a forced hero/dog readback, the destination is a tiled mipmap
-  // chain resolved one mip at a time, all reporting the same base address. The guest
-  // destination for each mip is base + the fetch-layout offset for its level (not the shared
-  // base, and not a running sum of lengths - that is wrong for tiled layouts and made the dog
-  // show "multiple textures"). (The GPU copy source stays at the EDRAM base; only the guest
-  // memcpy destination is offset.) The resolve destination is tiled by construction.
-  const reg::RB_COPY_DEST_PITCH cdp_dest = register_file_->Get<reg::RB_COPY_DEST_PITCH>();
-  const reg::RB_COPY_DEST_INFO cdi_dest = register_file_->Get<reg::RB_COPY_DEST_INFO>();
-  bool is_forced_readback =
-      !REXCVAR_GET(readback_resolve_force_addresses).empty() &&
-      ShouldForceReadbackResolve(written_address);
-  const uint32_t forced_mip_address =
-      is_forced_readback ? texture_cache_->GetMipAddressForBaseAddress(written_address) : 0;
-  uint32_t guest_dest_address =
-      is_forced_readback
-          ? GetForceReadbackDestAddress(written_address, forced_mip_address,
-                                        cdp_dest.copy_dest_pitch, cdp_dest.copy_dest_height,
-                                        uint32_t(cdi_dest.copy_dest_format), /*is_tiled=*/true,
-                                        written_length, frame_current_)
-          : written_address;
 
   bool is_scaled = texture_cache_->IsDrawResolutionScaled();
   uint64_t resolve_key = MakeReadbackResolveKey(written_address, written_length);
@@ -3229,110 +3093,9 @@ bool D3D12CommandProcessor::IssueCopy_ReadbackResolvePath() {
   bool should_copy = (readback_mode == ReadbackResolveMode::kSome) ? is_cache_miss : true;
   if (should_copy && rb.buffers[read_index] && written_length <= rb.sizes[read_index] &&
       rb.mapped_data[read_index]) {
-    // Write to the mip's correct sequential guest offset (== written_address except for a
-    // forced hero/dog mipmap readback, where guest_dest_address is base + cumulative offset).
-    uint8_t* destination = memory_->TranslatePhysical(guest_dest_address);
+    uint8_t* destination = memory_->TranslatePhysical(written_address);
     if (destination) {
       std::memcpy(destination, static_cast<uint8_t*>(rb.mapped_data[read_index]), written_length);
-    }
-  }
-
-  // [HERODOG data-change watch] Log the guest bytes at the dog's base (0x12704000) ONLY when they
-  // change, so we can see whether the static dog mip0 is being clobbered by the dynamic 256x256.
-  // This readback path fires every frame (the 256x256 resolves every frame), so reading the guest
-  // memory here right after the write captures the live value. Hash a 4 KiB window; on a change,
-  // log a line and dump the raw bytes to a .bin (first N changes) for inspection.
-  if (!REXCVAR_GET(readback_resolve_force_addresses).empty()) {
-    constexpr uint32_t kWatchAddr = 0x12704000;
-    constexpr uint32_t kWatchLen = 4096;
-    const uint8_t* watch_bytes =
-        static_cast<const uint8_t*>(memory_->TranslatePhysical(kWatchAddr));
-    if (watch_bytes) {
-      uint64_t h = 1469598103934665603ULL;
-      for (uint32_t i = 0; i < kWatchLen; i++) {
-        h ^= watch_bytes[i];
-        h *= 1099511628211ULL;
-      }
-      static uint64_t s_last_watch_hash = ~0ULL;
-      static int s_watch_count = 0;
-      if (h != s_last_watch_hash) {
-        s_last_watch_hash = h;
-        ++s_watch_count;
-        REXGPU_INFO("HERODOG_WATCH[{:3d}] frame={} addr={:#010x} len={} hash={:#018x}",
-                    s_watch_count, frame_current_, kWatchAddr, kWatchLen, h);
-        if (s_watch_count <= 50) {
-          static std::filesystem::path s_watch_dir;
-          static bool s_watch_dir_ready = false;
-          if (!s_watch_dir_ready) {
-            s_watch_dir = std::filesystem::current_path() / "texdump";
-            std::error_code ec;
-            std::filesystem::create_directories(s_watch_dir, ec);
-            s_watch_dir_ready = true;
-          }
-          std::filesystem::path path = s_watch_dir / (std::string("fable2_watch_") +
-                                                      std::to_string(s_watch_count) + ".bin");
-          std::ofstream f(path, std::ios::binary);
-          if (f) {
-            f.write(reinterpret_cast<const char*>(watch_bytes), kWatchLen);
-          }
-        }
-      }
-    }
-  }
-
-  // [HERODOG texture export] Dump the forced dog readback pixels to a BMP for review. Export the
-  // first few occurrences of each unique (width, height, format) so the 512x512 dog chain and the
-  // dynamic 256x256 are captured without flooding the disk.
-  if (is_forced_readback && rb.mapped_data[read_index]) {
-    static std::map<std::tuple<uint32_t, uint32_t, uint32_t>, int> s_dump_count;
-    static std::filesystem::path s_dump_dir;
-    static bool s_dump_dir_ready = false;
-    if (!s_dump_dir_ready) {
-      s_dump_dir = std::filesystem::current_path() / "texdump";
-      std::error_code ec;
-      std::filesystem::create_directories(s_dump_dir, ec);
-      s_dump_dir_ready = true;
-    }
-    const uint32_t dw = cdp_dest.copy_dest_pitch;
-    const uint32_t dh = cdp_dest.copy_dest_height;
-    const uint32_t dfmt = uint32_t(cdi_dest.copy_dest_format);
-    const auto dump_key = std::make_tuple(dw, dh, dfmt);
-    int& dump_count = s_dump_count[dump_key];
-    if (dump_count < 3) {
-      std::filesystem::path path = s_dump_dir / (std::string("fable2_tex_") + std::to_string(dw) +
-                                                 "x" + std::to_string(dh) + "_fmt" +
-                                                 std::to_string(dfmt) + "_" +
-                                                 std::to_string(dump_count) + ".bmp");
-      if (ExportTiledTextureToBmp(path, static_cast<const uint8_t*>(rb.mapped_data[read_index]),
-                                  dw, dh, dw, dfmt)) {
-        REXGPU_INFO("HERODOG_EXPORT wrote {} ({}x{} fmt={} occurrence {})", path.string(), dw, dh,
-                    dfmt, dump_count);
-      }
-      ++dump_count;
-    }
-  }
-
-  // [HERODOG diagnostic] Confirm whether the forced hero/dog readback is capturing
-  // changing (shifting) or stable data, and at what size/format.
-  if (!REXCVAR_GET(readback_resolve_force_addresses).empty() && rb.mapped_data[read_index]) {
-    static int s_herodog = 0;
-    if (s_herodog < 120) {
-      const uint8_t* src = static_cast<const uint8_t*>(rb.mapped_data[read_index]);
-      uint64_t h = 1469598103934665603ULL;
-      uint32_t n = written_length;
-      while (n--) {
-        h ^= *src++;
-        h *= 1099511628211ULL;
-      }
-      const reg::RB_COPY_DEST_INFO cdi = register_file_->Get<reg::RB_COPY_DEST_INFO>();
-      const reg::RB_COPY_DEST_PITCH cdp = register_file_->Get<reg::RB_COPY_DEST_PITCH>();
-      REXGPU_INFO("HERODOG_READBACK[{:3d}] frame={} rbbase={:#010x} dest={:#010x} len={} "
-                  "w={} h={} fmt={} hash={:#018x}",
-                  s_herodog, frame_current_,
-                  register_file_->values[XE_GPU_REG_RB_COPY_DEST_BASE], guest_dest_address,
-                  written_length, cdp.copy_dest_pitch, cdp.copy_dest_height,
-                  uint32_t(cdi.copy_dest_format), h);
-      ++s_herodog;
     }
   }
 

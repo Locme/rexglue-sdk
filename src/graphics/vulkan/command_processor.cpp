@@ -4391,17 +4391,8 @@ bool VulkanCommandProcessor::IssueCopy() {
   }
 
   ReadbackResolveMode readback_mode = GetReadbackResolveMode(REXCVAR_GET(vulkan_readback_resolve));
-  // [hero/dog fix] Only read back the 512x512 chain (the dog's texture) at the forced address;
-  // skip the every-frame 256x256 packed-mips resolve so its 128 KB mip0 doesn't clobber the dog.
-  const reg::RB_COPY_DEST_PITCH cdp_forced = register_file_->Get<reg::RB_COPY_DEST_PITCH>();
-  const bool is_forced_address =
-      ShouldForceReadbackResolve(register_file_->values[XE_GPU_REG_RB_COPY_DEST_BASE]);
-  const bool is_hero_dog_resolve =
-      is_forced_address && cdp_forced.copy_dest_pitch == 512 && cdp_forced.copy_dest_height == 512;
-  if (is_forced_address && !is_hero_dog_resolve) {
-    return true;
-  }
-  if (readback_mode == ReadbackResolveMode::kDisabled && !is_forced_address) {
+  if (readback_mode == ReadbackResolveMode::kDisabled &&
+      !ShouldForceReadbackResolve(register_file_->values[XE_GPU_REG_RB_COPY_DEST_BASE])) {
     uint32_t written_address, written_length;
     return render_target_cache_->Resolve(*memory_, *shared_memory_, *texture_cache_,
                                          written_address, written_length);
@@ -4434,26 +4425,6 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
       !ShouldForceReadbackResolve(written_address)) {
     return true;
   }
-
-  // [hero/dog mipmap fix] For a forced hero/dog readback, the destination is a tiled mipmap
-  // chain resolved one mip at a time, all reporting the same base address. The guest
-  // destination for each mip is base + the fetch-layout offset for its level (not the shared
-  // base, and not a running sum of lengths - that is wrong for tiled layouts and made the dog
-  // show "multiple textures"). The resolve destination is tiled by construction.
-  const reg::RB_COPY_DEST_PITCH cdp_dest = register_file_->Get<reg::RB_COPY_DEST_PITCH>();
-  const reg::RB_COPY_DEST_INFO cdi_dest = register_file_->Get<reg::RB_COPY_DEST_INFO>();
-  bool is_forced_readback =
-      !REXCVAR_GET(readback_resolve_force_addresses).empty() &&
-      ShouldForceReadbackResolve(written_address);
-  const uint32_t forced_mip_address =
-      is_forced_readback ? texture_cache_->GetMipAddressForBaseAddress(written_address) : 0;
-  uint32_t guest_dest_address =
-      is_forced_readback
-          ? GetForceReadbackDestAddress(written_address, forced_mip_address,
-                                        cdp_dest.copy_dest_pitch, cdp_dest.copy_dest_height,
-                                        uint32_t(cdi_dest.copy_dest_format), /*is_tiled=*/true,
-                                        written_length, frame_current_)
-          : written_address;
 
   auto ensure_readback_slot = [&](ReadbackBuffer& readback, uint32_t index, uint32_t size) -> bool {
     if (readback.buffers[index] != VK_NULL_HANDLE && size <= readback.sizes[index] &&
@@ -4710,9 +4681,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
     readback_memory_range.size = VK_WHOLE_SIZE;
     dfn.vkInvalidateMappedMemoryRanges(device, 1, &readback_memory_range);
 
-    // Write to the mip's correct sequential guest offset (== written_address except for a
-    // forced hero/dog mipmap readback, where guest_dest_address is base + cumulative offset).
-    uint8_t* destination = memory_->TranslatePhysical(guest_dest_address);
+    uint8_t* destination = memory_->TranslatePhysical(written_address);
     if (destination) {
       std::memcpy(destination, readback.mapped_data[read_index], written_length);
     }

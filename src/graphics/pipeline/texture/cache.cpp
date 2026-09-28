@@ -11,8 +11,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <set>
-#include <tuple>
 #include <utility>
 
 #include <rex/assert.h>
@@ -320,16 +318,6 @@ void TextureCache::BeginFrame() {
   ResetTextureBindings();
 }
 
-uint32_t TextureCache::GetMipAddressForBaseAddress(uint32_t base_address) const {
-  const uint32_t base_page = base_address >> 12;
-  for (const TextureBinding& binding : texture_bindings_) {
-    if (binding.key.is_valid && uint32_t(binding.key.base_page) == base_page) {
-      return uint32_t(binding.key.mip_page) << 12;
-    }
-  }
-  return 0;
-}
-
 void TextureCache::MarkRangeAsResolved(uint32_t start_unscaled, uint32_t length_unscaled) {
   if (length_unscaled == 0) {
     return;
@@ -513,31 +501,6 @@ void TextureCache::RequestTextures(uint32_t used_texture_mask) {
       }
       binding.Reset();
       continue;
-    }
-    // [HERODOG fetch diagnostic] Capture the guest fetch layout for textures in the forced
-    // hero/dog window, so we can see where the GPU actually reads mip0 / mips 1+ from.
-    // (fetch.base_address / mip_address are the guest byte address >> 12.)
-    if (!REXCVAR_GET(readback_resolve_force_addresses).empty()) {
-      const uint32_t fetch_base = fetch.base_address << 12;
-      if (fetch_base >= 0x12704000 && fetch_base < 0x12704000 + 0x10000) {
-        // Log each DISTINCT sampled texture in the window (base, mip, w, h, fmt, slot) once, so
-        // we can see whether the 512x512 dog chain is ALSO sampled (and on which slot / mip
-        // layout) vs the 256x256 dynamic texture. HERODOG_FETCHD = "fetch distinct".
-        static std::set<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t>>
-            s_seen_fetch;
-        const auto fetch_key = std::make_tuple(fetch_base, fetch.mip_address << 12,
-                                               binding.key.width_minus_1 + 1,
-                                               binding.key.height_minus_1 + 1,
-                                               uint32_t(binding.key.format), index);
-        if (s_seen_fetch.insert(fetch_key).second) {
-          REXGPU_INFO("HERODOG_FETCHD bind={} base={:#010x} mip={:#010x} w={} h={} max={} "
-                      "tiled={} packed={} fmt={}",
-                      index, fetch_base, fetch.mip_address << 12, binding.key.width_minus_1 + 1,
-                      binding.key.height_minus_1 + 1, uint32_t(binding.key.mip_max_level),
-                      binding.key.tiled ? 1 : 0, binding.key.packed_mips ? 1 : 0,
-                      uint32_t(binding.key.format));
-        }
-      }
     }
     uint32_t old_host_swizzle = binding.host_swizzle;
     binding.host_swizzle = GuestToHostSwizzle(fetch.swizzle, GetHostFormatSwizzle(binding.key));

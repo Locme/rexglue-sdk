@@ -28,7 +28,6 @@
 #include <rex/graphics/flags.h>
 #include <rex/graphics/graphics_system.h>
 #include <rex/graphics/pipeline/texture/info.h>
-#include <rex/graphics/pipeline/texture/util.h>
 #include <rex/graphics/sampler_info.h>
 #include <rex/graphics/xenos.h>
 #include <rex/logging.h>
@@ -208,27 +207,22 @@ bool CommandProcessor::ShouldForceReadbackResolve(uint32_t base) const {
     return false;
   }
 
-  // Only the hero/dog texture blit should force a readback, matching the
-  // femtofork's detection: a fullscreen kRectangleList draw with 3 indices that
-  // copies to the texture base. Restricting to that exact shape (rather than any
-  // copy near the address) matters: the dog's texture is touched by extra / 
-  // partial copies near the same region, and reading those back mid-update makes
-  // it look glitchy / shifting. The full-texture blit is the kRectangleList/3 one.
+  // Only the full-texture blit should force a readback, matching the femtofork's
+  // detection: a fullscreen kRectangleList draw with 3 indices that copies to the
+  // texture base. The dog's texture is touched by extra / partial copies near the
+  // same region; reading those back mid-update makes it look glitchy / shifting.
   const reg::VGT_DRAW_INITIATOR vgt = register_file_->Get<reg::VGT_DRAW_INITIATOR>();
   if (vgt.prim_type != xenos::PrimitiveType::kRectangleList || vgt.num_indices != 0x03) {
     return false;
   }
 
   // Each entry is a guest base address (hex with an optional 0x prefix, or
-  // decimal); it matches [addr, addr + kForceReadbackWindow).
-  //
-  // The window must be SMALL. The hero/dog texture lives in a densely-packed
-  // region of the GPU memory (0x12700000+) that also holds many other EDRAM
-  // resolve targets (e.g. 0x12724000, 0x1272c000, ...) which the game blits in
-  // rapid bursts. A 1 MiB window catches all of those and forces an immediate
-  // GPU-sync readback for each one, stalling the GPU mid-frame (the dog looked
-  // glitchy / red / shifting). 64 KiB still covers the target texture (the blit
-  // targets its base) while the nearest unrelated target is 128 KiB away.
+  // decimal); it matches [addr, addr + kForceReadbackWindow). The window must be
+  // small: 0x12704000 sits in a densely-packed region with other EDRAM resolve
+  // targets (e.g. 0x12724000) blitted in rapid bursts. A wide window forces an
+  // immediate GPU-sync readback for each, stalling the GPU mid-frame (the dog
+  // looked glitchy / red / shifting). 64 KiB covers the target while the nearest
+  // unrelated target is 128 KiB away.
   constexpr uint32_t kForceReadbackWindow = 1u << 16;  // 64 KiB
   size_t start = 0;
   while (start < spec.size()) {
@@ -250,13 +244,12 @@ bool CommandProcessor::ShouldForceReadbackResolve(uint32_t base) const {
         size_t pos = 0;
         addr = std::stoull(std::string(token), &pos, 0);  // base 0: 0x-hex or decimal
       } catch (const std::exception&) {
-        addr = 0;
-        // Malformed token - ignore.
+        addr = 0;  // Malformed token - ignore.
       }
       uint32_t a = static_cast<uint32_t>(addr);
       if (base >= a && base - a < kForceReadbackWindow) {
-        // Throttled diagnostic: confirm the forced readback is triggering and on
-        // the expected address (helps discover a second address for the dog).
+        // Throttled diagnostic: confirm the forced readback is triggering and on the
+        // expected address (helps discover a second address for the dog).
         static int s_forced_readback_log = 0;
         if (s_forced_readback_log < 24) {
           REXGPU_INFO("Forced readback-resolve for RB_COPY_DEST_BASE={:#010x} "
@@ -270,68 +263,6 @@ bool CommandProcessor::ShouldForceReadbackResolve(uint32_t base) const {
     start = end + 1;
   }
   return false;
-}
-
-uint32_t CommandProcessor::GetForceReadbackDestAddress(uint32_t address, uint32_t mip_address,
-                                                       uint32_t width, uint32_t height,
-                                                       uint32_t format, bool is_tiled,
-                                                       uint32_t len, uint64_t frame) {
-  // A mipmap chain (the dog's 512x512) is resolved one mip at a time, largest-first, all
-  // reporting the SAME base address AND the SAME render-target width/height. So the mip level
-  // CANNOT be derived from the width (it is constant); it is the running index within the
-  // burst (the Nth mip is level N). The burst resets when the address/frame changes, or when a
-  // LARGER length arrives (a new base mip of a different chain sharing the base). Each mip is
-  // then placed at the fetch-layout offset for its level (not a running sum of lengths, which
-  // is wrong for tiled/packed layouts and made the dog show "multiple textures").
-  const bool new_burst = (address != force_readback_burst_address_ ||
-                          frame != force_readback_burst_frame_ ||
-                          len > force_readback_burst_prev_len_);
-  if (new_burst) {
-    force_readback_burst_address_ = address;
-    force_readback_burst_frame_ = frame;
-    force_readback_burst_base_width_ = width;
-    force_readback_burst_base_height_ = height;
-    force_readback_burst_mip_level_ = 0;
-    force_readback_burst_first_len_ = len;
-  } else {
-    force_readback_burst_mip_level_++;
-  }
-  force_readback_burst_prev_len_ = len;
-  const uint32_t level = force_readback_burst_mip_level_;
-  const uint32_t base_width = force_readback_burst_base_width_;
-  const uint32_t base_height = force_readback_burst_base_height_;
-  // The mip region (mips 1+) address is normally the bound texture's mip_address, but the dog's
-  // chain is resolved BEFORE it is ever bound/sampled, so the cache lookup returns 0. For a
-  // tiled texture the mip region sits right after mip0, so fall back to base + size_of_mip0
-  // (the burst's first-mip length). Verified: the 256x256's mip_address 0x12724000 == its base
-  // 0x12704000 + its 128 KB mip0.
-  uint32_t effective_mip_address = mip_address;
-  if (effective_mip_address == 0) {
-    effective_mip_address = address + force_readback_burst_first_len_;
-  }
-  // Build the guest layout for the full mip chain (max_level = log2 of the base dimension),
-  // then index the per-mip offset. has_packed_levels=false: the dog's first mips (0-4) are not
-  // packed, so their offsets are identical either way.
-  const uint32_t base_dim = std::max(base_width, base_height);
-  const uint32_t max_level = base_dim >= 2 ? static_cast<uint32_t>(rex::log2_ceil(base_dim)) : 0;
-  const uint32_t base_pitch_texels_div_32 = std::max<uint32_t>(1, base_width / 32);
-  const texture_util::TextureGuestLayout layout = texture_util::GetGuestTextureLayout(
-      xenos::DataDimension::k2DOrStacked, base_pitch_texels_div_32, base_width, base_height, 1,
-      is_tiled, static_cast<xenos::TextureFormat>(format), false, true, max_level);
-  if (level >= xenos::kTextureMaxMips) {
-    return address;
-  }
-  // [TEMP — reverting to the known-best placement] Writing each mip to its distinct
-  // fetch-layout offset (effective_mip_address + mip_offsets_bytes[level]) made the dog show
-  // "multiple textures" — the sampler does NOT read mips 1+ from there. Placing every mip at
-  // the base (they overlap) was the best-looking result so far ("1 texture, shimmering").
-  // Temporarily force the base while we confirm where the sampler actually reads each mip
-  // (via the distinct-HERODOG_FETCH dump). See plan.
-  // if (level == 0) {
-  //   return address;
-  // }
-  // return effective_mip_address + layout.mip_offsets_bytes[level];
-  return address;
 }
 
 bool CommandProcessor::IsReadbackMemexportEnabled(bool legacy_backend_flag) const {
