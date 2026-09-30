@@ -22,6 +22,8 @@
 #include <vector>
 
 #include <rex/graphics/register_file.h>
+#include <rex/graphics/frame_limiter.h>
+#include <rex/graphics/guest_frame_meter.h>
 #include <rex/graphics/registers.h>
 #include <rex/graphics/xenos.h>
 #include <rex/memory.h>
@@ -239,6 +241,8 @@ class CommandProcessor {
   RegisterFile* register_file_ = nullptr;
 
   std::atomic<bool> worker_running_;
+  FrameLimiter frame_limiter_;
+  GuestFrameMeter guest_frame_meter_;
   system::object_ref<system::XHostThread> worker_thread_;
 
   std::queue<std::function<void()>> pending_fns_;

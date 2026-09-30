@@ -1,4 +1,3 @@
-LIBRARY rexruntime
 EXPORTS
 ??0AchievementToastDialog@ui@rex@@QEAA@PEAVImGuiDrawer@12@PEAVImmediateDrawer@12@PEAVRuntime@2@@Z
 ??0AchievementsOverlayDialog@ui@rex@@QEAA@PEAVImGuiDrawer@12@PEAVImmediateDrawer@12@PEAVRuntime@2@PEAVAchievementManager@system@2@@Z
@@ -105,6 +104,8 @@ EXPORTS
 ?GetLoggerRaw@rex@@YAPEAVlogger@spdlog@@ULogCategoryId@1@@Z
 ?GetPackedMipOffset@texture_util@graphics@rex@@YA_NIIIW4TextureFormat@xenos@23@IAEAI11@Z
 ?GetSnapshotCounter@perf@rex@@YA_JW4CounterId@12@@Z
+?SetCounter@perf@rex@@YAXW4CounterId@12@_J@Z
+?ResetFrameCounters@perf@rex@@YAXXZ
 ?GetSubresourcesFromFetchConstant@texture_util@graphics@rex@@YAXAEBTxe_gpu_texture_fetch_t@xenos@23@PEAI111111@Z
 ?GetTiledAddressUpperBound2D@texture_util@graphics@rex@@YAIIIII@Z
 ?GetTiledAddressUpperBound3D@texture_util@graphics@rex@@YAIIIIIII@Z
@@ -179,6 +180,7 @@ EXPORTS
 ?SetPresenter@ImmediateDrawer@ui@rex@@QEAAXPEAVPresenter@23@@Z
 ?SetPresenter@Window@ui@rex@@QEAAXPEAVPresenter@23@@Z
 ?SetTitle@Window@ui@rex@@QEAAXV?$basic_string_view@DU?$char_traits@D@std@@@std@@@Z
+?SetIcon@Window@ui@rex@@QEAAXPEBX_K@Z
 ?Setup@Runtime@rex@@QEAAIAEBUPPCImageInfo@2@URuntimeConfig@2@@Z
 ?ShowSimpleMessageBox@rex@@YAXW4SimpleMessageBoxType@1@V?$basic_string_view@DU?$char_traits@D@std@@@std@@@Z
 ?Sleep@thread@rex@@YAXV?$duration@_JU?$ratio@$00$0PECEA@@std@@@chrono@std@@@Z
@@ -476,3 +478,8 @@ vmaCreateImage
 vmaDestroyAllocator
 vmaDestroyImage
 vmaGetAllocationInfo
+?IncrementCounter@perf@rex@@YAXW4CounterId@12@_J@Z
+?WriteCsvFrame@perf@rex@@YAXXZ
+?FlushCsv@perf@rex@@YAXXZ
+?GetFlagByName@cvar@rex@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$basic_string_view@DU?$char_traits@D@std@@@4@@Z
+?GetRegistry@cvar@rex@@YAAEAV?$vector@UFlagEntry@cvar@rex@@V?$allocator@UFlagEntry@cvar@rex@@@std@@@std@@XZ

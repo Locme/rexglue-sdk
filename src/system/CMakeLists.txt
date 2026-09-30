@@ -59,6 +59,15 @@ add_library(rex::kernel ALIAS rexruntime)
 # exported even when the dual-backend (D3D12+Vulkan) build's full symbol set
 # would otherwise push them out of the linker's export table.
 set(REXRUNTIME_DEF "${CMAKE_CURRENT_SOURCE_DIR}/rexruntime.def")
+if(WIN32 AND NOT REXGLUE_USE_VULKAN)
+    # The curated table contains dual-backend imports. D3D12-only builds must
+    # not request exports whose Vulkan implementation is not compiled.
+    file(STRINGS "${REXRUNTIME_DEF}" REXRUNTIME_EXPORT_LINES)
+    list(FILTER REXRUNTIME_EXPORT_LINES EXCLUDE REGEX "@vulkan@|FLAGS_vulkan|^vma")
+    list(JOIN REXRUNTIME_EXPORT_LINES "\n" REXRUNTIME_EXPORT_TEXT)
+    set(REXRUNTIME_DEF "${CMAKE_CURRENT_BINARY_DIR}/rexruntime-d3d12.def")
+    file(WRITE "${REXRUNTIME_DEF}" "${REXRUNTIME_EXPORT_TEXT}\n")
+endif()
 # lld-link needs the /DEF: flag (a bare positional .def path is "unknown file
 # type"). The flag must reach lld-link (not clang++), so it is passed via
 # -Xlinker; and the path must be space-free (the project path contains spaces),

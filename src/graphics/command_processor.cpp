@@ -40,6 +40,12 @@
 
 REXCVAR_DEFINE_BOOL(vsync, true, "GPU", "Enable vertical sync");
 
+REXCVAR_DEFINE_INT32(frame_limit, 0, "GPU",
+                     "Host guest-frame swap limit in FPS (0 = unlimited). "
+                     "VSync and guest timing may impose a lower rate.")
+    .range(0, 240)
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+
 REXCVAR_DEFINE_BOOL(clear_memory_page_state, true, "GPU",
                     "Refresh page-valid state from GPU-written memory at frame end. "
                     "Disable for minor CPU overhead reduction, but may break memory coherency.")
@@ -1014,18 +1020,15 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(memory::RingBuffer* reader, ui
                                                   uint32_t count) {
   SCOPE_profile_cpu_f("gpu");
 
-#ifdef REXGLUE_ENABLE_PERF_COUNTERS
-  {
-    static uint64_t last_frame_tick = 0;
-    uint64_t now = rex::chrono::Clock::QueryHostTickCount();
-    if (last_frame_tick) {
-      uint64_t freq = rex::chrono::Clock::QueryHostTickFrequency();
-      int64_t dt_us = static_cast<int64_t>((now - last_frame_tick) * 1000000 / freq);
-      PROFILE_FRAME_TIME_US(dt_us);
-      PROFILE_FPS(freq / (now - last_frame_tick));
-    }
-    last_frame_tick = now;
-  }
+  frame_limiter_.Pace(REXCVAR_GET(frame_limit));
+
+  // The small guest FPS readout also works in Release, where the full
+  // profiling macros compile out. Shared runtime counters feed the F3 UI.
+  auto mean_us = guest_frame_meter_.Record(GuestFrameMeter::Clock::now());
+  rex::perf::SetCounter(rex::perf::CounterId::kFrameTimeUs, mean_us);
+  rex::perf::SetCounter(rex::perf::CounterId::kFps, mean_us > 0 ? 1000000 / mean_us : 0);
+#ifndef REXGLUE_ENABLE_PERF_COUNTERS
+  rex::perf::ResetFrameCounters();
 #endif
   rex::perf::Profiler::Flip();
 
