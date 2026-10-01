@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <utility>
 
 #include <rex/assert.h>
@@ -1610,6 +1611,53 @@ void Presenter::ForceUIThreadPaintTick() {
   std::scoped_lock<std::mutex> dxgi_ui_tick_lock(dxgi_ui_tick_mutex_);
   dxgi_ui_tick_force_requested_ = true;
 #endif  // XE_PLATFORM
+}
+
+bool Presenter::VsyncPresentGateAllows() {
+#if REX_PLATFORM_WIN32
+  // The `vsync` cvar is owned by the GPU plugin, so query it by name instead
+  // of linking the plugin into the UI layer (returns false when the cvar -
+  // i.e. the plugin - isn't present).
+  if (!rex::cvar::Query<bool>("vsync")) {
+    return true;
+  }
+  std::unique_lock<std::mutex> dxgi_ui_tick_lock(dxgi_ui_tick_mutex_);
+  if (!AreDXGIUITicksWaitable(dxgi_ui_tick_lock)) {
+    // Host vblank ticks are not being produced (no UI drawer active, or the
+    // output unavailable): there is no live refresh rate to gate against.
+    return true;
+  }
+  bool allows =
+      vsync_present_gate_last_present_tick_.load(std::memory_order_relaxed) !=
+      dxgi_ui_tick_last_vblank_;
+  if (!allows) {
+    // Rate-limited log so the capping is visible in the log without flooding.
+    uint64_t now_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    if (now_ms - vsync_present_gate_last_log_time_ms_ >= 1000) {
+      vsync_present_gate_last_log_time_ms_ = now_ms;
+      REXLOG_INFO("vsync present gate: suppressed {} host presents since the "
+                  "last second (capped at the monitor refresh rate)",
+                  vsync_present_gate_suppressed_.exchange(0, std::memory_order_relaxed));
+    }
+    vsync_present_gate_suppressed_.fetch_add(1, std::memory_order_relaxed);
+  }
+  return allows;
+#else
+  return true;
+#endif  // REX_PLATFORM_WIN32
+}
+
+void Presenter::VsyncPresentGateNotePresent() {
+#if REX_PLATFORM_WIN32
+  std::unique_lock<std::mutex> dxgi_ui_tick_lock(dxgi_ui_tick_mutex_);
+  if (AreDXGIUITicksWaitable(dxgi_ui_tick_lock)) {
+    vsync_present_gate_last_present_tick_.store(dxgi_ui_tick_last_vblank_,
+                                                std::memory_order_relaxed);
+  }
+#endif  // REX_PLATFORM_WIN32
 }
 
 #if REX_PLATFORM_WIN32

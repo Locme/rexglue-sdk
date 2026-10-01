@@ -862,6 +862,21 @@ class Presenter {
   // May be called from any thread.
   void ForceUIThreadPaintTick();
 
+ protected:
+  // Vsync present gate: when the guest `vsync` cvar (owned by the GPU plugin)
+  // is enabled, at most one present into the host swap chain is allowed per
+  // host vblank. Without this, the guest output paints (paced by the guest's
+  // own frame rate) and the continuous UI repaints (paced by the host refresh
+  // rate, every vblank while any dialog is active) each present independently,
+  // over-presenting at (guest rate + refresh rate) and defeating vsync. The
+  // gate only applies while the host vblank ticks are actually being produced
+  // (see AreDXGIUITicksWaitable); otherwise there is no live refresh rate to
+  // gate against. Called from the derived presenters' PaintAndPresentImpl.
+  bool VsyncPresentGateAllows();
+  // Call after a successful Present to record the current host vblank tick.
+  void VsyncPresentGateNotePresent();
+
+ private:
   // Must be called only in the end of entry points - reinitialization of the
   // presenter may be done by the handler if it was called from the UI thread
   // (even if the UI thread argument is false - such as when the guest output is
@@ -1030,6 +1045,13 @@ class Presenter {
 
   std::mutex dxgi_ui_tick_mutex_;
   uint64_t dxgi_ui_tick_last_vblank_ = 1;
+  // Vsync present gate: the host vblank tick (dxgi_ui_tick_last_vblank_) on
+  // which the last present was made. Read/written from both the UI thread and
+  // the guest output thread (hence atomic); the log throttle state below is
+  // only touched under dxgi_ui_tick_mutex_.
+  std::atomic<uint64_t> vsync_present_gate_last_present_tick_{0};
+  std::atomic<uint64_t> vsync_present_gate_suppressed_{0};
+  uint64_t vsync_present_gate_last_log_time_ms_ = 0;
   // If output is null or shutdown is true, the signal may not be sent, either
   // don't limit the frame rate in this case (an exceptional situation, such as
   // a failure to find the output in DXGI), or don't draw at all if the window
