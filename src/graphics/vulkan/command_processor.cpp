@@ -4391,7 +4391,8 @@ bool VulkanCommandProcessor::IssueCopy() {
   }
 
   ReadbackResolveMode readback_mode = GetReadbackResolveMode(REXCVAR_GET(vulkan_readback_resolve));
-  if (readback_mode == ReadbackResolveMode::kDisabled) {
+  if (readback_mode == ReadbackResolveMode::kDisabled &&
+      !ShouldForceReadbackResolve(register_file_->values[XE_GPU_REG_RB_COPY_DEST_BASE])) {
     uint32_t written_address, written_length;
     return render_target_cache_->Resolve(*memory_, *shared_memory_, *texture_cache_,
                                          written_address, written_length);
@@ -4420,7 +4421,8 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
   }
 
   ReadbackResolveMode readback_mode = GetReadbackResolveMode(REXCVAR_GET(vulkan_readback_resolve));
-  if (readback_mode == ReadbackResolveMode::kDisabled) {
+  if (readback_mode == ReadbackResolveMode::kDisabled &&
+      !ShouldForceReadbackResolve(written_address)) {
     return true;
   }
 
