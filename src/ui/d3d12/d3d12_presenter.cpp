@@ -1156,6 +1156,13 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawe
     // the host present rate capped at the monitor refresh rate.
     return PaintResult::kPresented;
   }
+  if (!GuestVblankPaceAllows()) {
+    // The `pace_to_guest_vblank` cvar is enabled: at most one present per
+    // guest-refresh interval, so the game runs at its native guest vblank
+    // framerate. The swap chain keeps showing the last presented frame until
+    // the next allowed present.
+    return PaintResult::kPresented;
+  }
   // Present as soon as possible, without waiting for vsync (the host refresh
   // rate may be something like 144 Hz, which is not a multiple of the common
   // 30 Hz or 60 Hz guest refresh rate), and allowing dropping outdated queued

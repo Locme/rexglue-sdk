@@ -2175,12 +2175,17 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
   }
   command_buffers[command_buffer_count++] = draw_command_buffer;
   VkSemaphore present_semaphore = paint_submission.present_semaphore();
-  // Vsync present gate (see Presenter::VsyncPresentGateAllows): when the
-  // `vsync` cvar is enabled, at most one present into the swapchain is
-  // allowed per host vblank. If this paint's present is suppressed, don't
-  // signal the present semaphore either - a signal without a matching present
-  // wait would accumulate and let a later present consume a stale signal.
-  const bool present_suppressed_by_vsync = !VsyncPresentGateAllows();
+  // Present gates. Vsync present gate (see Presenter::VsyncPresentGateAllows):
+  // when the `vsync` cvar is enabled, at most one present into the swapchain
+  // is allowed per host vblank. Guest vblank pacer (see
+  // Presenter::GuestVblankPaceAllows): when the `pace_to_guest_vblank` cvar is
+  // enabled, at most one present per guest-refresh interval, so the game runs
+  // at its native guest vblank framerate. If this paint's present is
+  // suppressed, don't signal the present semaphore either - a signal without a
+  // matching present wait would accumulate and let a later present consume a
+  // stale signal.
+  const bool present_suppressed_by_vsync =
+      !VsyncPresentGateAllows() || !GuestVblankPaceAllows();
   VkSubmitInfo submit_info;
   submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
   submit_info.pNext = nullptr;

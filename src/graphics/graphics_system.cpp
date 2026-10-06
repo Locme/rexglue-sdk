@@ -331,6 +331,13 @@ void GraphicsSystem::MarkVblank() {
   if (command_processor_) {
     command_processor_->increment_counter();
   }
+  // Notify the presenter of the guest vblank so the guest-vblank frame pacer
+  // (when enabled) can gate the host present rate on the actual vblank cadence.
+  // presenter_ is stable while the GPU VSync thread runs (SetupPresentation runs
+  // before SetupGuestGpu; Shutdown joins this thread before resetting it).
+  if (presenter_) {
+    presenter_->OnGuestVblank();
+  }
 
   // TODO(benvanik): we shouldn't need to do the dispatch here, but there's
   //     something wrong and the CP will block waiting for code that
