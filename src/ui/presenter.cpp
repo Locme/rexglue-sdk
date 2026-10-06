@@ -31,11 +31,12 @@ REXCVAR_DEFINE_BOOL(host_present_from_non_ui_thread, true, "UI/Presenter",
                     "Allow presentation from non-UI thread");
 
 REXCVAR_DEFINE_BOOL(pace_to_guest_vblank, false, "UI/Presenter",
-                    "Gate the host present (game frame) to the guest's actual "
-                    "frame cadence - at most one present per rendered guest "
-                    "frame - so the display frame rate matches the game's real "
-                    "frame rate for profiling (not the emulated vblank, which "
-                    "runs at the configured refresh rate)")
+                    "Gate the host present (game frame) to the emulated guest "
+                    "vblank cadence - at most one present per guest vblank - so "
+                    "the display frame rate matches the guest vblank rate "
+                    "(the configured refresh rate, ~60 Hz) for profiling, rather "
+                    "than the slower render loop which may draw a new frame "
+                    "only every other vblank")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
 REXCVAR_DEFINE_BOOL(present_letterbox, true, "UI/Presenter",
@@ -576,8 +577,10 @@ bool Presenter::RefreshGuestOutput(
       return false;
     }
     guest_output_active_last_refresh_ = true;
-    // Increment the guest frame counter (the game's actual frame rate), which
-    // the guest-frame pacer (GuestVblankPaceAllows) gates the host present to.
+    // Increment the guest frame counter (the game's actual render rate, the
+    // source of the F3 FPS counter). The pacer (GuestVblankPaceAllows) gates
+    // the host present on this counter so the display cadence matches the
+    // guest's actual frame production.
     guest_frame_count_.fetch_add(1, std::memory_order_relaxed);
   } else {
     // Request presenting a blank image if there was a true image previously,
@@ -1675,14 +1678,14 @@ bool Presenter::GuestVblankPaceAllows() {
   if (!REXCVAR_GET(pace_to_guest_vblank)) {
     return true;
   }
-  // Gate on the *actual* guest frame counter (incremented by RefreshGuestOutput
-  // on every rendered guest frame), so the host present rate matches the game's
-  // real frame cadence rather than the emulated vblank (which runs at the
-  // configured refresh rate, ~60 Hz, even when the title only renders every
-  // other vblank). At most one host present is allowed per guest frame: claim
+  // Gate on the guest frame counter (incremented in RefreshGuestOutput once
+  // per rendered guest frame), so the host present rate exactly matches the
+  // guest's actual (varying) frame-production cadence - the source of the F3
+  // FPS counter. At most one host present is allowed per guest frame: claim
   // the current count via a compare-and-swap so a given frame is only ever
   // presented once, even if the UI thread and the guest output thread race to
-  // present it.
+  // present it. UI/overlay repaints that carry no new guest frame are
+  // suppressed.
   const uint64_t count = guest_frame_count_.load(std::memory_order_relaxed);
   uint64_t last = guest_frame_pace_last_count_.load(std::memory_order_relaxed);
   bool allowed = false;
@@ -1710,18 +1713,18 @@ bool Presenter::GuestVblankPaceAllows() {
   if (window_start == 0) {
     // First call after enabling: open the first rate window.
     guest_frame_pace_window_start_ms_.store(now_ms, std::memory_order_relaxed);
-    guest_frame_pace_window_start_frame_count_.store(count, std::memory_order_relaxed);
-    guest_frame_pace_window_start_vblank_count_.store(
-        guest_vblank_count_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    guest_frame_pace_window_start_vblank_count_.store(count, std::memory_order_relaxed);
+    guest_frame_pace_window_start_frame_count_.store(
+        guest_frame_count_.load(std::memory_order_relaxed), std::memory_order_relaxed);
     return allowed;
   }
   const uint64_t elapsed_ms = now_ms - window_start;
   if (elapsed_ms >= 1000) {
     const double elapsed_s = double(elapsed_ms) / 1000.0;
-    const uint64_t window_start_frame_count =
-        guest_frame_pace_window_start_frame_count_.load(std::memory_order_relaxed);
     const uint64_t window_start_vblank_count =
         guest_frame_pace_window_start_vblank_count_.load(std::memory_order_relaxed);
+    const uint64_t window_start_frame_count =
+        guest_frame_pace_window_start_frame_count_.load(std::memory_order_relaxed);
     const uint64_t vblank_count = guest_vblank_count_.load(std::memory_order_relaxed);
     const double guest_frame_hz = double(count - window_start_frame_count) / elapsed_s;
     const double guest_vblank_hz = double(vblank_count - window_start_vblank_count) / elapsed_s;
@@ -1729,8 +1732,8 @@ bool Presenter::GuestVblankPaceAllows() {
         double(guest_frame_pace_present_count_.exchange(0, std::memory_order_relaxed)) / elapsed_s;
     const double suppressed_hz =
         double(guest_frame_pace_suppressed_.exchange(0, std::memory_order_relaxed)) / elapsed_s;
-    REXLOG_INFO("guest frame pacer: guest frame ~{:.1f} Hz, emulated vblank "
-                "~{:.1f} Hz, host present ~{:.1f} Hz, suppressed ~{:.1f} Hz "
+    REXLOG_INFO("guest vblank pacer: guest frame (gate) ~{:.1f} Hz, emulated "
+                "vblank ~{:.1f} Hz, host present ~{:.1f} Hz, suppressed ~{:.1f} Hz "
                 "({} ms window)",
                 guest_frame_hz, guest_vblank_hz, present_hz, suppressed_hz,
                 static_cast<unsigned>(elapsed_ms));

@@ -1119,6 +1119,33 @@ bool CommandProcessor::ExecutePacketType3_WAIT_REG_MEM(memory::RingBuffer* reade
     if (!matched) {
       // Wait.
       if (wait >= 0x100) {
+        // Diagnostic: per-second summary of WAIT_REG_MEM wait-hint sleeps
+        // (the vsync path that sleeps wait/0x100 ms). Long, frequent
+        // sleeps here mean the guest's own frame loop is pacing itself.
+        static uint64_t diag_waits = 0;
+        static uint64_t diag_sleep_ms = 0;
+        static auto diag_last_log =
+            std::chrono::steady_clock::now();
+        diag_waits++;
+        if (REXCVAR_GET(vsync)) {
+          diag_sleep_ms += wait / 0x100;
+        }
+        const auto now_log = std::chrono::steady_clock::now();
+        if (now_log - diag_last_log >= std::chrono::seconds(1)) {
+          const auto elapsed_ms = std::chrono::duration_cast<
+              std::chrono::milliseconds>(now_log - diag_last_log)
+                                      .count();
+          REXGPU_INFO(
+              "WAIT_REG_MEM long-waits: {} in {} ms "
+              "(~{:.1f}/s, total sleep {} ms/s, vsync={})",
+              diag_waits, elapsed_ms,
+              1000.0 * static_cast<double>(diag_waits) /
+                  static_cast<double>(elapsed_ms),
+              diag_sleep_ms, REXCVAR_GET(vsync) ? 1 : 0);
+          diag_waits = 0;
+          diag_sleep_ms = 0;
+          diag_last_log = now_log;
+        }
         PrepareForWait();
         if (!REXCVAR_GET(vsync)) {
           // User wants it fast and dangerous.

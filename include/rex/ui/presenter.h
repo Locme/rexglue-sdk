@@ -1076,13 +1076,14 @@ class Presenter {
   uint64_t vsync_present_gate_last_log_time_ms_ = 0;
   // Emulated guest vblank counter (incremented by OnGuestVblank on every
   // emulated vblank interrupt). This runs at the configured refresh rate
-  // (~60 Hz), independent of how often the game actually renders a frame; it's
-  // tracked for the diagnostic log only.
+  // (~60 Hz, or ~1000 Hz when guest_vblank_pacing is off), independent of how
+  // often the game actually renders a frame; reported in the pacer's rate
+  // diagnostic.
   std::atomic<uint64_t> guest_vblank_count_{0};
   // Guest frame counter (incremented by RefreshGuestOutput on every rendered
-  // guest frame). This is the game's *actual* frame rate (e.g. ~30 Hz when the
-  // title renders every other vblank) - the cadence the pacer gates the host
-  // present to.
+  // guest frame). This is the game's *actual* render rate (the source of the
+  // F3 FPS counter) and the cadence the pacer (GuestVblankPaceAllows) gates
+  // the host present to.
   std::atomic<uint64_t> guest_frame_count_{0};
   // Pacer: at most one host present per rendered guest frame.
   // `guest_frame_pace_last_count_` is the last-presented guest frame count,
