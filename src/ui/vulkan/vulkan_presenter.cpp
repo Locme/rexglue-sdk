@@ -1529,6 +1529,26 @@ bool VulkanPresenter::GuestOutputImage::Initialize() {
 }
 
 Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_drawers) {
+  // Present gates. Vsync present gate (see Presenter::VsyncPresentGateAllows):
+  // when the `vsync` cvar is enabled, at most one present into the swapchain
+  // is allowed per host vblank. Guest vblank pacer (see
+  // Presenter::GuestVblankPaceAllows): when the `pace_to_guest_vblank` cvar is
+  // enabled, at most one present per guest frame, so the game runs at its
+  // native guest vblank framerate. Decide before acquiring a swapchain image:
+  // an acquired image only goes back to the presentation engine by being
+  // presented, so skipping the present after the acquire leaks one image per
+  // suppressed paint, until every acquire fails and the window stops updating.
+  if (!VsyncPresentGateAllows() || !GuestVblankPaceAllows()) {
+    if (execute_ui_drawers) {
+      // The UI drawers that would have requested the next paint don't run
+      // this time; keep the continuous UI repaint going.
+      RequestUIPaintFromUIThread();
+    }
+    // The swapchain keeps showing the last presented image until a later
+    // paint presents the fresh content.
+    return PaintResult::kPresented;
+  }
+
   // Begin the submission in place of the one not currently potentially used on
   // the GPU.
   uint64_t current_paint_submission_index =
@@ -2175,17 +2195,6 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
   }
   command_buffers[command_buffer_count++] = draw_command_buffer;
   VkSemaphore present_semaphore = paint_submission.present_semaphore();
-  // Present gates. Vsync present gate (see Presenter::VsyncPresentGateAllows):
-  // when the `vsync` cvar is enabled, at most one present into the swapchain
-  // is allowed per host vblank. Guest vblank pacer (see
-  // Presenter::GuestVblankPaceAllows): when the `pace_to_guest_vblank` cvar is
-  // enabled, at most one present per guest-refresh interval, so the game runs
-  // at its native guest vblank framerate. If this paint's present is
-  // suppressed, don't signal the present semaphore either - a signal without a
-  // matching present wait would accumulate and let a later present consume a
-  // stale signal.
-  const bool present_suppressed_by_vsync =
-      !VsyncPresentGateAllows() || !GuestVblankPaceAllows();
   VkSubmitInfo submit_info;
   submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
   submit_info.pNext = nullptr;
@@ -2194,8 +2203,8 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
   submit_info.pWaitDstStageMask = &acquire_semaphore_wait_stage;
   submit_info.commandBufferCount = command_buffer_count;
   submit_info.pCommandBuffers = command_buffers;
-  submit_info.signalSemaphoreCount = present_suppressed_by_vsync ? 0 : 1;
-  submit_info.pSignalSemaphores = present_suppressed_by_vsync ? nullptr : &present_semaphore;
+  submit_info.signalSemaphoreCount = 1;
+  submit_info.pSignalSemaphores = &present_semaphore;
   {
     VulkanSubmissionTracker::FenceAcquisition fence_acqusition(
         paint_context_.submission_tracker.AcquireFenceToAdvanceSubmission());
@@ -2238,15 +2247,6 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
     }
   }
 
-  if (present_suppressed_by_vsync) {
-    // A frame was already presented on this host vblank (the `vsync` cvar is
-    // enabled). Skip the present: the swapchain keeps showing the last
-    // presented image until the next paint presents the fresh content, which
-    // happens on the next vblank at the latest while any UI drawer is active
-    // (the continuous UI repaint is requested after every draw). This keeps
-    // the host present rate capped at the monitor refresh rate.
-    return PaintResult::kPresented;
-  }
   VkPresentInfoKHR present_info;
   present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
   present_info.pNext = nullptr;
