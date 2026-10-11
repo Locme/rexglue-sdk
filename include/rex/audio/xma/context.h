@@ -246,12 +246,22 @@ class XmaContext {
   uint32_t GetAmountOfBitsToRead(uint32_t remaining_stream_bits, uint32_t frame_size);
   const uint8_t* GetNextPacket(XMA_CONTEXT_DATA* data, uint32_t next_packet_index,
                                uint32_t current_input_packet_count);
+  struct PacketHandle {
+    uint32_t buffer_index = 0;
+    uint32_t packet_index = 0;
+    bool is_valid = false;
+  };
+  PacketHandle GetPacketHandle(XMA_CONTEXT_DATA* data, uint32_t buffer_index,
+                               uint32_t packet_index, uint32_t current_input_packet_count);
   uint32_t GetNextPacketReadOffset(uint8_t* buffer, uint32_t next_packet_index,
+                                   uint32_t current_input_packet_count);
+  uint32_t GetNextPacketReadOffset(XMA_CONTEXT_DATA* data, uint32_t next_packet_index,
                                    uint32_t current_input_packet_count);
   uint8_t* GetCurrentInputBuffer(XMA_CONTEXT_DATA* data);
 
   void Decode(XMA_CONTEXT_DATA* data);
   void Consume(memory::RingBuffer* output_rb, const XMA_CONTEXT_DATA* data);
+  void FlushCarry(const XMA_CONTEXT_DATA* data);
   void UpdateLoopStatus(XMA_CONTEXT_DATA* data);
   void ClearLocked(XMA_CONTEXT_DATA* data);
   void ResetDecoderState();

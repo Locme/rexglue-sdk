@@ -9,6 +9,8 @@
  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
+#include <atomic>
+
 #include <rex/audio/xma/context.h>
 #include <rex/audio/xma/decoder.h>
 #include <rex/cvar.h>
@@ -206,7 +208,14 @@ int XmaDecoder::GetContextId(uint32_t guest_ptr) {
 uint32_t XmaDecoder::AllocateContext() {
   size_t index = context_bitmap_.Acquire();
   if (index == -1) {
-    // Out of contexts.
+    // Out of contexts. The game's voice creation fails and that sound is never
+    // heard, so say so: it usually means contexts are leaking.
+    static std::atomic<uint32_t> failures{0};
+    const uint32_t n = ++failures;
+    if (n <= 10 || (n % 1000) == 0) {
+      REXAPU_WARN("XMA: out of decoder contexts (all {} in use), sound dropped ({} so far)",
+                  static_cast<uint32_t>(kContextCount), n);
+    }
     return 0;
   }
 
