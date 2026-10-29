@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -3591,6 +3592,86 @@ void VulkanPipelineCache::CreateQueuedPipelinesOnProcessorThread() {
       }
     }
   }
+}
+
+bool VulkanPipelineCache::WaitForPipeline(void* handle, uint32_t timeout_ms) {
+  if (!handle) {
+    return false;
+  }
+  const Pipeline* target = reinterpret_cast<const Pipeline*>(handle);
+  auto is_ready = [target]() {
+    return !target->is_placeholder.load(std::memory_order_acquire) &&
+           target->pipeline.load(std::memory_order_acquire) != VK_NULL_HANDLE;
+  };
+  auto is_pending = [target]() {
+    return target->is_placeholder.load(std::memory_order_acquire);
+  };
+  if (!is_pending()) {
+    return is_ready();
+  }
+  if (creation_threads_.empty()) {
+    return false;
+  }
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+
+  // Help creating the queued pipelines (highest priority first) until the needed
+  // one exists, or has been attempted.
+  while (is_pending() && std::chrono::steady_clock::now() < deadline) {
+    PipelineCreationArguments creation_arguments;
+    {
+      std::lock_guard<std::mutex> lock(creation_request_lock_);
+      if (creation_queue_.empty()) {
+        break;
+      }
+      creation_arguments = creation_queue_.top();
+      creation_queue_.pop();
+    }
+    bool created = EnsurePipelineCreated(creation_arguments);
+    if (!created) {
+      // Same handling as on the creation threads.
+      bool has_placeholder =
+          creation_arguments.pipeline->second.is_placeholder.load(std::memory_order_acquire);
+      VkPipeline pipeline =
+          creation_arguments.pipeline->second.pipeline.load(std::memory_order_acquire);
+      if (has_placeholder && pipeline != VK_NULL_HANDLE) {
+        creation_arguments.pipeline->second.is_placeholder.store(false, std::memory_order_release);
+      } else {
+        creation_arguments.pipeline->second.pipeline.store(VK_NULL_HANDLE,
+                                                           std::memory_order_release);
+      }
+      if (&creation_arguments.pipeline->second == target) {
+        return false;
+      }
+    }
+    if (&creation_arguments.pipeline->second == target) {
+      break;
+    }
+  }
+  if (!is_pending()) {
+    return is_ready();
+  }
+
+  // The pipeline may be being created by a background thread - wait for all
+  // threads to finish, the same way as when waiting for all queued pipelines.
+  bool await_creation_completion_event;
+  {
+    std::lock_guard<std::mutex> lock(creation_request_lock_);
+    await_creation_completion_event = creation_threads_busy_ != 0;
+    if (await_creation_completion_event) {
+      creation_completion_event_->Reset();
+      creation_completion_set_event_ = true;
+    }
+  }
+  if (await_creation_completion_event) {
+    creation_request_cond_.notify_one();
+    auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - std::chrono::steady_clock::now());
+    if (remaining.count() < 0) {
+      remaining = std::chrono::milliseconds(0);
+    }
+    rex::thread::Wait(creation_completion_event_.get(), false, remaining);
+  }
+  return !is_pending() && is_ready();
 }
 
 void VulkanPipelineCache::ProcessDeferredPipelineDestructions(bool force_all) {
