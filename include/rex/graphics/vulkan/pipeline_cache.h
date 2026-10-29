@@ -94,6 +94,13 @@ class VulkanPipelineCache {
       VulkanRenderTargetCache::RenderPassKey render_pass_key, VkPipeline& pipeline_out,
       const PipelineLayoutProvider*& pipeline_layout_out, void** pipeline_handle_out = nullptr);
   bool IsCreatingPipelines() const;
+  // Blocks until the pipeline, queued for background creation while a
+  // placeholder (discarding) pipeline stands in for it, has been created or its
+  // creation has failed, creating queued pipelines on the calling thread in
+  // priority order in the meantime. Used instead of drawing with the
+  // placeholder. Gives up after timeout_ms. Returns whether the real pipeline is
+  // available.
+  bool WaitForPipeline(void* handle, uint32_t timeout_ms);
   void GetPipelineAndLayoutByHandle(void* handle, VkPipeline& pipeline_out,
                                     const PipelineLayoutProvider*& pipeline_layout_out,
                                     bool* is_placeholder_out = nullptr) const;

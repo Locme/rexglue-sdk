@@ -3864,8 +3864,23 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t 
   pipeline_cache_->GetPipelineAndLayoutByHandle(pipeline_handle, pipeline, pipeline_layout_provider,
                                                 &pipeline_is_placeholder);
   if (REXCVAR_GET(async_shader_compilation) && pipeline_is_placeholder) {
-    frame_used_async_placeholder_pipeline_ = true;
-    return true;
+    // The placeholder pipeline discards every pixel, so drawing with it leaves
+    // objects missing for that frame and leaves any texture rendered by the
+    // pass empty (render-to-texture passes such as Fable II's realtime texture
+    // morphing run only once). Wait for the real pipeline instead. Only the
+    // first use of a pipeline can stall, as without async compilation.
+    if (REXCVAR_GET(async_pipeline_wait) &&
+        pipeline_cache_->WaitForPipeline(
+            pipeline_handle,
+            uint32_t(std::max(100, REXCVAR_GET(async_pipeline_wait_timeout_ms))))) {
+      pipeline_cache_->GetPipelineAndLayoutByHandle(pipeline_handle, pipeline,
+                                                    pipeline_layout_provider,
+                                                    &pipeline_is_placeholder);
+    }
+    if (pipeline_is_placeholder) {
+      frame_used_async_placeholder_pipeline_ = true;
+      return true;
+    }
   }
   if (pipeline == VK_NULL_HANDLE || pipeline_layout_provider == nullptr) {
     return draw_fail("pipeline_lookup");
