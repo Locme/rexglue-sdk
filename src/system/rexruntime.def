@@ -145,9 +145,13 @@ EXPORTS
 ?ParseVirtualKey@ui@rex@@YA?AW4VirtualKey@12@V?$basic_string_view@DU?$char_traits@D@std@@@std@@@Z
 ?PlatformQuitFromUIThread@SDLWindowedAppContext@ui@rex@@UEAAXXZ
 ?PopItemWidth@ImGui@@YAXXZ
+?PopStyleColor@ImGui@@YAXH@Z
+?PopStyleVar@ImGui@@YAXH@Z
 ?PrepareModuleLaunch@Runtime@rex@@QEAA?AV?$object_ref@VXThread@system@rex@@@system@2@XZ
 ?ProcessKeyEvent@ui@rex@@YA_NAEAVKeyEvent@12@@Z
 ?PushItemWidth@ImGui@@YAXM@Z
+?PushStyleColor@ImGui@@YAXHAEBUImVec4@@@Z
+?PushStyleVar@ImGui@@YAXHM@Z
 ?QueryGuestTickCount@Clock@chrono@rex@@SA_KXZ
 ?QueryHostTickCount@Clock@chrono@rex@@SA_KXZ
 ?QueryHostTickFrequency@Clock@chrono@rex@@SA_KXZ
