@@ -26,6 +26,8 @@ EXPORTS
 ?AddInputListener@Window@ui@rex@@QEAAXPEAVWindowInputListener@23@_K@Z
 ?AddLine@ImDrawList@@QEAAXAEBUImVec2@@0IM@Z
 ?AddListener@Window@ui@rex@@QEAAXPEAVWindowListener@23@@Z
+rex_get_swap_color_grade
+rex_set_swap_color_grade
 ?AddRect@ImDrawList@@QEAAXAEBUImVec2@@0IMHM@Z
 ?AddImage@ImDrawList@@QEAAXUImTextureRef@@AEBUImVec2@@111I@Z
 ?AddRectFilled@ImDrawList@@QEAAXAEBUImVec2@@0IMH@Z
