@@ -24,7 +24,9 @@ EXPORTS
 ??1WindowedAppContext@ui@rex@@UEAA@XZ
 ?AddDriver@InputSystem@input@rex@@QEAAXV?$unique_ptr@VInputDriver@input@rex@@U?$default_delete@VInputDriver@input@rex@@@std@@@std@@@Z
 ?AddInputListener@Window@ui@rex@@QEAAXPEAVWindowInputListener@23@_K@Z
+?AddLine@ImDrawList@@QEAAXAEBUImVec2@@0IM@Z
 ?AddListener@Window@ui@rex@@QEAAXPEAVWindowListener@23@@Z
+?AddRect@ImDrawList@@QEAAXAEBUImVec2@@0IMHM@Z
 ?AddSink@rex@@YAXV?$shared_ptr@Vsink@sinks@spdlog@@@std@@@Z
 ?AddVirtualMappedRange@Memory@memory@rex@@QEAA_NIIIPEAXP6AI00I@ZP6AX00II@Z@Z
 ?AdvanceRead@RingBuffer@memory@rex@@QEAAX_K@Z
@@ -106,6 +108,7 @@ EXPORTS
 ?GetDepthRenderTargetFormatName@xenos@graphics@rex@@YAPEBDW4DepthRenderTargetFormat@123@@Z
 ?GetExecutableFolder@filesystem@rex@@YA?AVpath@1std@@XZ
 ?GetFlagSource@cvar@rex@@YA?AW4Source@12@V?$basic_string_view@DU?$char_traits@D@std@@@std@@@Z
+?GetForegroundDrawList@ImGui@@YAPEAUImDrawList@@XZ
 ?GetGuestTextureLayout@texture_util@graphics@rex@@YA?AUTextureGuestLayout@123@W4DataDimension@xenos@23@IIII_NW4TextureFormat@623@11I@Z
 ?GetIO@ImGuiDrawer@ui@rex@@QEAAAEAUImGuiIO@@XZ
 ?GetLogger@rex@@YA?AV?$shared_ptr@Vlogger@spdlog@@@std@@XZ
