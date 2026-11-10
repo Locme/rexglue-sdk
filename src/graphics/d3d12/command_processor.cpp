@@ -2282,6 +2282,12 @@ void D3D12CommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbu
             SetExternalPipeline(color_grade_pipeline_.Get());
             SubmitBarriers();
             deferred_command_list_.D3DDispatch(group_count_x, group_count_y, 1);
+            static bool grade_logged = false;
+            if (!grade_logged) {
+              grade_logged = true;
+              REXGPU_INFO("Swap colour grade applied ({}x{}, {})", guest_output_width,
+                          guest_output_height, use_fxaa ? "FXAA source" : "guest output");
+            }
           }
         }
 
