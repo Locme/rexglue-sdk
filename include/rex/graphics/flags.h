@@ -23,6 +23,7 @@ REXCVAR_DECLARE(bool, half_pixel_offset_host_scaled);
 REXCVAR_DECLARE(bool, async_shader_compilation);
 REXCVAR_DECLARE(bool, async_pipeline_wait);
 REXCVAR_DECLARE(int32_t, async_pipeline_wait_timeout_ms);
+REXCVAR_DECLARE(bool, gpu_sync_at_frame_start);
 REXCVAR_DECLARE(std::string, depth_bias_shader);
 REXCVAR_DECLARE(int32_t, depth_bias_shader_units);
 

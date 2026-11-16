@@ -123,6 +123,11 @@ REXCVAR_DEFINE_INT32(async_pipeline_wait_timeout_ms, 5000, "GPU",
     .range(100, 60000)
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
+REXCVAR_DEFINE_BOOL(gpu_sync_at_frame_start, false, "GPU",
+                    "At the start of each frame, wait until the GPU has finished all earlier "
+                    "work, so the GPU is never more than one frame behind")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+
 REXCVAR_DEFINE_STRING(depth_bias_shader, "", "GPU",
                       "Guest pixel shader ucode hash (hex) whose draws get "
                       "depth_bias_shader_units of extra host depth bias, for geometry that "

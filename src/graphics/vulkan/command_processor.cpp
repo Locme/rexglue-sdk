@@ -5169,6 +5169,11 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
   // is still available, and whether the await was successful.
   uint64_t await_submission =
       is_opening_frame ? closed_frame_submissions_[frame_current_ % kMaxFramesInFlight] : 0;
+  if (is_opening_frame && REXCVAR_GET(gpu_sync_at_frame_start)) {
+    // Wait for all earlier submissions, so the GPU is never more than one frame
+    // behind (the same as on Direct3D 12).
+    await_submission = std::max(await_submission, GetCurrentSubmission() - 1);
+  }
   CheckSubmissionFenceAndDeviceLoss(await_submission);
   if (device_lost_ || submission_completed_ < await_submission) {
     return false;

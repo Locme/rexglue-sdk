@@ -48,10 +48,6 @@ REXCVAR_DEFINE_BOOL(terrain_tess_cpu, true, "GPU/D3D12",
                     "Compute Fable II's terrain tessellation factors on the CPU so the "
                     "memexport draw does not wait for the GPU every frame")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
-REXCVAR_DEFINE_BOOL(gpu_sync_at_frame_start, false, "GPU/D3D12",
-                    "At the start of each frame, wait until the GPU has finished all earlier "
-                    "work, so the GPU is never more than one frame behind")
-    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 REXCVAR_DEFINE_BOOL(skinning_cpu, true, "GPU/D3D12",
                     "Compute Fable II's memexport skinning on the CPU so the draw does not "
                     "wait for the GPU every frame")
