@@ -32,6 +32,12 @@ class VulkanCommandProcessor;
 
 class VulkanRenderTargetCache final : public RenderTargetCache {
  public:
+  // The next Update's draw replaces all depth (see
+  // draw_util::IsDepthClearRectangle), so the depth transfer can be skipped.
+  void SetDepthOverwrittenByNextUpdate(bool overwritten) {
+    depth_overwritten_by_next_update_ = overwritten;
+  }
+
   union RenderPassKey {
     struct {
       // If emulating 2x as 4x, this is still 2x for simplicity of using this
@@ -879,6 +885,8 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   VkPipelineLayout resolve_fsi_clear_pipeline_layout_ = VK_NULL_HANDLE;
   VkPipeline resolve_fsi_clear_32bpp_pipeline_ = VK_NULL_HANDLE;
   VkPipeline resolve_fsi_clear_64bpp_pipeline_ = VK_NULL_HANDLE;
+
+  bool depth_overwritten_by_next_update_ = false;
 };
 
 }  // namespace rex::graphics::vulkan

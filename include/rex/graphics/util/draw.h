@@ -243,6 +243,13 @@ inline bool DoesCoverageDependOnAlpha(reg::RB_COLORCONTROL rb_colorcontrol) {
 bool IsPixelShaderNeededWithRasterization(const Shader& shader, const RegisterFile& regs,
                                           bool include_memory_export = true);
 
+// A rectangle replacing all depth and stencil from the top left across the
+// render target's width, whatever was there (a Direct3D 9 style depth clear).
+// Pitches are rounded up, so the rectangle may stop slightly short of the
+// pitch.
+bool IsDepthClearRectangle(const RegisterFile& regs, const memory::Memory& memory,
+                           const Shader& vertex_shader);
+
 struct ViewportInfo {
   // Offset from render target UV = 0 to +UV.
   // For simplicity of cropping to the maximum size on the host; to match the

@@ -128,6 +128,13 @@ REXCVAR_DEFINE_BOOL(gpu_sync_at_frame_start, false, "GPU",
                     "work, so the GPU is never more than one frame behind")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
+REXCVAR_DEFINE_BOOL(skip_depth_clear_transfers, true, "GPU",
+                    "Do not copy old depth into a render target for a rectangle that overwrites "
+                    "all depth and stencil across its width, like a Direct3D 9 depth clear. "
+                    "Only used with execute_unclipped_draw_vs_on_cpu, which limits the "
+                    "transfer to the rectangle's height")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+
 REXCVAR_DEFINE_STRING(depth_bias_shader, "", "GPU",
                       "Guest pixel shader ucode hash (hex) whose draws get "
                       "depth_bias_shader_units of extra host depth bias, for geometry that "

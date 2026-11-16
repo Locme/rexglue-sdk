@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 #include <rex/assert.h>
 #include <rex/cvar.h>
@@ -115,6 +116,45 @@ void GetPreferredFacePolygonOffset(const RegisterFile& regs, bool primitive_poly
   }
   scale_out = scale;
   offset_out = offset;
+}
+
+bool IsDepthClearRectangle(const RegisterFile& regs, const memory::Memory& memory,
+                           const Shader& vertex_shader) {
+  constexpr float kPitchMargin = 80.0f;
+  auto initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
+  if (initiator.prim_type != xenos::PrimitiveType::kRectangleList ||
+      initiator.source_select != xenos::SourceSelect::kAutoIndex || initiator.num_indices != 3 ||
+      !regs.Get<reg::PA_CL_CLIP_CNTL>().clip_disable || vertex_shader.vertex_bindings().empty()) {
+    return false;
+  }
+  const reg::RB_DEPTHCONTROL depth = regs.Get<reg::RB_DEPTHCONTROL>();
+  if (!depth.z_enable || !depth.z_write_enable || depth.zfunc != xenos::CompareFunction::kAlways ||
+      !depth.stencil_enable || depth.stencilfunc != xenos::CompareFunction::kAlways ||
+      depth.stencilzpass != xenos::StencilOp::kReplace ||
+      regs.Get<reg::RB_STENCILREFMASK>().stencilwritemask != 0xFF) {
+    return false;
+  }
+  const Shader::VertexBinding& binding = vertex_shader.vertex_bindings()[0];
+  xenos::xe_gpu_vertex_fetch_t fetch = regs.GetVertexFetch(binding.fetch_constant);
+  const uint8_t* vertices = memory.TranslatePhysical<const uint8_t*>(fetch.address << 2);
+  if (!vertices || fetch.endian != xenos::Endian::k8in32) {
+    return false;
+  }
+  float min_x = 1e30f, min_y = 1e30f, max_x = -1e30f;
+  for (uint32_t i = 0; i < 3; ++i) {
+    float position[2];
+    for (uint32_t axis = 0; axis < 2; ++axis) {
+      uint32_t raw;
+      std::memcpy(&raw, vertices + i * binding.stride_words * 4 + axis * 4, sizeof(raw));
+      raw = rex::byte_swap(raw);
+      std::memcpy(&position[axis], &raw, sizeof(raw));
+    }
+    min_x = std::min(min_x, position[0]);
+    max_x = std::max(max_x, position[0]);
+    min_y = std::min(min_y, position[1]);
+  }
+  const float pitch = float(regs.Get<reg::RB_SURFACE_INFO>().surface_pitch);
+  return min_x <= 0.5f && min_y <= 0.5f && max_x >= pitch - 0.5f - kPitchMargin;
 }
 
 bool IsPixelShaderNeededWithRasterization(const Shader& shader, const RegisterFile& regs,
