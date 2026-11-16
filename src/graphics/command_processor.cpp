@@ -135,6 +135,15 @@ REXCVAR_DEFINE_BOOL(skip_depth_clear_transfers, true, "GPU",
                     "transfer to the rectangle's height")
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
+REXCVAR_DEFINE_BOOL(terrain_tess_cpu, true, "GPU",
+                    "Compute Fable II's terrain tessellation factors on the CPU so the "
+                    "memexport draw does not wait for the GPU every frame")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skinning_cpu, true, "GPU",
+                    "Compute Fable II's memexport skinning on the CPU so the draw does not "
+                    "wait for the GPU every frame")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+
 REXCVAR_DEFINE_STRING(depth_bias_shader, "", "GPU",
                       "Guest pixel shader ucode hash (hex) whose draws get "
                       "depth_bias_shader_units of extra host depth bias, for geometry that "

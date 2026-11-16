@@ -20,8 +20,8 @@
 #include <rex/dbg.h>
 #include <rex/perf/counter.h>
 #include <rex/graphics/d3d12/command_processor.h>
-#include "fable2_skinning.h"
-#include "fable2_terrain_tess.h"
+#include "../fable2_skinning.h"
+#include "../fable2_terrain_tess.h"
 #include <rex/graphics/d3d12/graphics_system.h>
 #include <rex/graphics/d3d12/shader.h>
 #include <rex/graphics/flags.h>
@@ -38,14 +38,6 @@ REXCVAR_DEFINE_BOOL(d3d12_bindless, true, "GPU/D3D12", "Use bindless resources w
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
 REXCVAR_DECLARE(bool, execute_unclipped_draw_vs_on_cpu);
-REXCVAR_DEFINE_BOOL(terrain_tess_cpu, true, "GPU/D3D12",
-                    "Compute Fable II's terrain tessellation factors on the CPU so the "
-                    "memexport draw does not wait for the GPU every frame")
-    .lifecycle(rex::cvar::Lifecycle::kHotReload);
-REXCVAR_DEFINE_BOOL(skinning_cpu, true, "GPU/D3D12",
-                    "Compute Fable II's memexport skinning on the CPU so the draw does not "
-                    "wait for the GPU every frame")
-    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
 REXCVAR_DEFINE_BOOL(d3d12_readback_memexport, false, "GPU/D3D12",
                     "Read data written by memory export in shaders on the CPU")
