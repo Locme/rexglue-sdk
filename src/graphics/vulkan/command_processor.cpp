@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <mutex>
@@ -3959,7 +3960,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t 
       host_render_targets_used, pixel_shader && pixel_shader->writes_depth(), viewport_info);
 
   // Update dynamic graphics pipeline state.
-  UpdateDynamicState(viewport_info, primitive_polygonal, normalized_depth_control);
+  UpdateDynamicState(viewport_info, primitive_polygonal, normalized_depth_control, pixel_shader);
 
   auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
 
@@ -5715,7 +5716,8 @@ void VulkanCommandProcessor::DestroySwapFxaaSourceImage() {
 
 void VulkanCommandProcessor::UpdateDynamicState(const draw_util::ViewportInfo& viewport_info,
                                                 bool primitive_polygonal,
-                                                reg::RB_DEPTHCONTROL normalized_depth_control) {
+                                                reg::RB_DEPTHCONTROL normalized_depth_control,
+                                                const Shader* pixel_shader) {
 #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
   SCOPE_profile_cpu_f("gpu");
 #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
@@ -5779,6 +5781,13 @@ void VulkanCommandProcessor::UpdateDynamicState(const draw_util::ViewportInfo& v
     // background is more likely.
     depth_bias_slope_factor *= xenos::kPolygonOffsetScaleSubpixelUnit *
                                float(std::max(draw_resolution_scale_x, draw_resolution_scale_y));
+    // Extra bias for one pixel shader whose geometry relies on exact ties in
+    // the guest's 24-bit float depth (the same as on Direct3D 12).
+    const std::string& bias_shader = REXCVAR_GET(depth_bias_shader);
+    if (pixel_shader && !bias_shader.empty() &&
+        std::strtoull(bias_shader.c_str(), nullptr, 16) == pixel_shader->ucode_data_hash()) {
+      depth_bias_constant_factor += float(REXCVAR_GET(depth_bias_shader_units));
+    }
     // std::memcmp instead of != so in case of NaN, every draw won't be
     // invalidating it.
     dynamic_depth_bias_update_needed_ |=

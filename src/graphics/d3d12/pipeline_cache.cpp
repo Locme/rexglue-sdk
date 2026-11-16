@@ -65,16 +65,6 @@ REXCVAR_DEFINE_INT32(d3d12_pipeline_creation_threads, -1, "GPU/D3D12",
 REXCVAR_DEFINE_BOOL(d3d12_tessellation_wireframe, false, "GPU/D3D12",
                     "Render tessellation as wireframe");
 
-REXCVAR_DEFINE_STRING(depth_bias_shader, "", "GPU/D3D12",
-                      "Guest pixel shader ucode hash (hex) whose draws get "
-                      "depth_bias_shader_units of extra host depth bias, for geometry that "
-                      "relies on exact ties in the guest's 24-bit float depth (Z fighting on "
-                      "the host's 32-bit depth). Host render target path only.")
-    .lifecycle(rex::cvar::Lifecycle::kHotReload);
-REXCVAR_DEFINE_INT32(depth_bias_shader_units, 0, "GPU/D3D12",
-                     "Extra Direct3D 12 DepthBias units for depth_bias_shader.")
-    .lifecycle(rex::cvar::Lifecycle::kHotReload);
-
 namespace rex::graphics::d3d12 {
 
 // Generated with `xb buildshaders`.

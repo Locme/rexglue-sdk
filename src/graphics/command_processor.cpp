@@ -123,6 +123,17 @@ REXCVAR_DEFINE_INT32(async_pipeline_wait_timeout_ms, 5000, "GPU",
     .range(100, 60000)
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
+REXCVAR_DEFINE_STRING(depth_bias_shader, "", "GPU",
+                      "Guest pixel shader ucode hash (hex) whose draws get "
+                      "depth_bias_shader_units of extra host depth bias, for geometry that "
+                      "relies on exact ties in the guest's 24-bit float depth (Z fighting on "
+                      "the host's 32-bit depth). Host render target path only.")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_INT32(depth_bias_shader_units, 0, "GPU",
+                     "Extra host depth bias units (Direct3D 12 DepthBias, Vulkan "
+                     "depthBiasConstantFactor) for depth_bias_shader.")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+
 namespace rex::graphics {
 
 using namespace rex::graphics::xenos;

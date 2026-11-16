@@ -503,7 +503,8 @@ class VulkanCommandProcessor : public CommandProcessor {
   void DestroySwapFxaaSourceImage();
 
   void UpdateDynamicState(const draw_util::ViewportInfo& viewport_info, bool primitive_polygonal,
-                          reg::RB_DEPTHCONTROL normalized_depth_control);
+                          reg::RB_DEPTHCONTROL normalized_depth_control,
+                          const Shader* pixel_shader);
   void UpdateSystemConstantValues(
       bool primitive_polygonal,
       const PrimitiveProcessor::ProcessingResult& primitive_processing_result,
