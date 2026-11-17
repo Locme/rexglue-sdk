@@ -2050,8 +2050,7 @@ void VulkanCommandProcessor::ShutdownContext() {
 
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
                                          swap_color_grade_fxaa_source_pipeline_);
-  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
-                                         swap_color_grade_pipeline_);
+  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device, swap_color_grade_pipeline_);
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipelineLayout, device,
                                          swap_color_grade_pipeline_layout_);
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
@@ -2812,9 +2811,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
             std::memcpy(grade_constants.shadows, grade.shadows, sizeof(grade.shadows));
             std::memcpy(grade_constants.highlights, grade.highlights, sizeof(grade.highlights));
             std::memcpy(grade_constants.fade, grade.fade, sizeof(grade.fade));
-            deferred_command_buffer_.CmdVkPushConstants(
-                swap_color_grade_pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0,
-                sizeof(grade_constants), &grade_constants);
+            deferred_command_buffer_.CmdVkPushConstants(swap_color_grade_pipeline_layout_,
+                                                        VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                                                        sizeof(grade_constants), &grade_constants);
             BindExternalComputePipeline(color_grade_pipeline);
             deferred_command_buffer_.CmdVkDispatch(group_count_x, group_count_y, 1);
             static bool grade_logged = false;
