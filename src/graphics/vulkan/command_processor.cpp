@@ -30,6 +30,8 @@
 #include <rex/math.h>
 #include <rex/graphics/util/draw.h>
 #include <rex/graphics/flags.h>
+#include "../fable2_skinning.h"
+#include "../fable2_terrain_tess.h"
 #include <rex/graphics/pipeline/shader/shader.h>
 #include <rex/graphics/pipeline/shader/spirv_translator.h>
 #include <rex/graphics/registers.h>
@@ -3640,6 +3642,21 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t 
     return draw_fail("missing_vertex_shader");
   }
   pipeline_cache_->AnalyzeShaderUcode(*vertex_shader);
+  // These memexport shaders only read data the CPU wrote, so the CPU can give the
+  // guest their output directly (as on D3D12). The draw still runs, only the wait
+  // to read the result back is skipped.
+  bool memexport_computed_on_cpu = false;
+  {
+    uint32_t written_start = 0, written_length = 0;
+    const uint64_t vs_hash = vertex_shader->ucode_data_hash();
+    memexport_computed_on_cpu =
+        (vs_hash == kFable2TerrainTessShader && REXCVAR_GET(terrain_tess_cpu) &&
+         ComputeFable2TerrainTess(*register_file_, *memory_, *vertex_shader, written_start,
+                                  written_length)) ||
+        (vs_hash == kFable2SkinningShader && REXCVAR_GET(skinning_cpu) &&
+         ComputeFable2Skinning(*register_file_, *memory_, *vertex_shader, nullptr, written_start,
+                               written_length));
+  }
   bool memexport_used_vertex = vertex_shader->memexport_eM_written() != 0;
   if (memexport_used_vertex) {
     if (!device_properties.vertexPipelineStoresAndAtomics) {
@@ -4177,7 +4194,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t 
     shared_memory_->RangeWrittenByGpu(0, SharedMemory::kBufferSize);
   }
 
-  if (IsReadbackMemexportEnabled(REXCVAR_GET(vulkan_readback_memexport)) &&
+  if (!memexport_computed_on_cpu &&
+      IsReadbackMemexportEnabled(REXCVAR_GET(vulkan_readback_memexport)) &&
       !memexport_ranges_.empty()) {
     uint32_t memexport_total_size = 0;
     for (const draw_util::MemExportRange& memexport_range : memexport_ranges_) {

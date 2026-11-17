@@ -36,6 +36,8 @@ REXCVAR_DECLARE(bool, readback_memexport_fast);
 REXCVAR_DECLARE(bool, readback_memexport_fast_wait);
 REXCVAR_DECLARE(bool, occlusion_query_enable);
 REXCVAR_DECLARE(int32_t, query_occlusion_fake_sample_count);
+REXCVAR_DECLARE(bool, terrain_tess_cpu);
+REXCVAR_DECLARE(bool, skinning_cpu);
 
 // GPU Depth / Render Target Behavior
 REXCVAR_DECLARE(bool, depth_float24_round);

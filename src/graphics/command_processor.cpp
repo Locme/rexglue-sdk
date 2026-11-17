@@ -46,6 +46,15 @@ REXCVAR_DEFINE_INT32(frame_limit, 0, "GPU",
     .range(0, 240)
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
+REXCVAR_DEFINE_BOOL(terrain_tess_cpu, true, "GPU",
+                    "Compute Fable II's terrain tessellation factors on the CPU so the "
+                    "memexport draw does not wait for the GPU every frame")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(skinning_cpu, true, "GPU",
+                    "Compute Fable II's memexport skinning on the CPU so the draw does not "
+                    "wait for the GPU to read its output back every frame")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+
 REXCVAR_DEFINE_BOOL(clear_memory_page_state, true, "GPU",
                     "Refresh page-valid state from GPU-written memory at frame end. "
                     "Disable for minor CPU overhead reduction, but may break memory coherency.")
